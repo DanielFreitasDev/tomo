@@ -1,0 +1,275 @@
+/*
+ * Tomo design tokens — the entire visual system as CSS custom properties.
+ * Semantic tokens are defined per theme on :root/.dark and re-exported to
+ * Tailwind via @theme inline, so utilities like bg-surface / text-secondary
+ * switch themes with zero re-render.
+ *
+ * Accent: "Iris" (blue-violet) — distinct from Postman orange, Bruno amber,
+ * Insomnia purple. Neutrals are zinc-cool to harmonize.
+ */
+
+:root {
+  /* ---------- bg layers ---------- */
+  --bg-app: #f4f4f5;
+  --bg-surface: #ffffff;
+  --bg-raised: #ffffff;
+  --bg-overlay: #ffffff;
+  --bg-inset: #f0f0f2;
+  --bg-hover: rgb(16 16 20 / 0.05);
+  --bg-active: rgb(16 16 20 / 0.08);
+  --bg-selected: rgb(91 91 214 / 0.1);
+
+  /* ---------- text ---------- */
+  --text-primary: #18181c;
+  --text-secondary: #52525b;
+  --text-muted: #8e8e98;
+  --text-disabled: #b8b8c0;
+  --text-inverse: #ffffff;
+
+  /* ---------- borders ---------- */
+  --border-subtle: #ececef;
+  --border-default: #e0e0e4;
+  --border-strong: #c9c9d0;
+
+  /* ---------- accent (iris) ---------- */
+  --accent: #5b5bd6;
+  --accent-hover: #5353cb;
+  --accent-active: #4c4cbe;
+  --accent-fg: #ffffff;
+  --accent-text: #5151d0;
+  --accent-soft: rgb(91 91 214 / 0.1);
+  --accent-soft-border: rgb(91 91 214 / 0.3);
+  --focus-ring: #5b5bd6;
+  --selection-bg: rgb(91 91 214 / 0.18);
+
+  /* ---------- semantic ---------- */
+  --info: #0369a1;
+  --info-soft: rgb(3 105 161 / 0.1);
+  --success: #047857;
+  --success-soft: rgb(4 120 87 / 0.1);
+  --warning: #b45309;
+  --warning-soft: rgb(180 83 9 / 0.12);
+  --danger: #dc2626;
+  --danger-soft: rgb(220 38 38 / 0.1);
+
+  /* ---------- HTTP methods ---------- */
+  --method-get: #047857;
+  --method-post: #b45309;
+  --method-put: #2563eb;
+  --method-patch: #7c3aed;
+  --method-delete: #dc2626;
+  --method-head: #0f766e;
+  --method-options: #db2777;
+  --method-custom: #6b7280;
+
+  /* ---------- syntax (CodeMirror + inline) ---------- */
+  --syn-comment: #90909a;
+  --syn-string: #0f766e;
+  --syn-number: #b45309;
+  --syn-atom: #7c3aed;
+  --syn-property: #2563eb;
+  --syn-keyword: #be185d;
+  --syn-function: #9333ea;
+  --syn-definition: #2563eb;
+  --syn-operator: #71717a;
+  --syn-tag: #be185d;
+  --syn-attr: #b45309;
+  --syn-invalid: #dc2626;
+  --syn-link: #2563eb;
+  --var-defined: #047857;
+  --var-defined-bg: rgb(4 120 87 / 0.1);
+  --var-undefined: #dc2626;
+  --var-undefined-bg: rgb(220 38 38 / 0.1);
+
+  /* ---------- elevation ---------- */
+  --shadow-sm: 0 1px 2px rgb(16 16 20 / 0.06), 0 0 0 1px rgb(16 16 20 / 0.04);
+  --shadow-md: 0 4px 12px rgb(16 16 20 / 0.1), 0 0 0 1px rgb(16 16 20 / 0.05);
+  --shadow-lg: 0 12px 32px rgb(16 16 20 / 0.16), 0 0 0 1px rgb(16 16 20 / 0.05);
+}
+
+.dark {
+  --bg-app: #101012;
+  --bg-surface: #17171a;
+  --bg-raised: #1e1e22;
+  --bg-overlay: #232329;
+  --bg-inset: #121215;
+  --bg-hover: rgb(255 255 255 / 0.06);
+  --bg-active: rgb(255 255 255 / 0.09);
+  --bg-selected: rgb(124 124 240 / 0.14);
+
+  --text-primary: #ececee;
+  --text-secondary: #a6a6af;
+  --text-muted: #74747e;
+  --text-disabled: #4e4e56;
+  --text-inverse: #18181c;
+
+  --border-subtle: #26262b;
+  --border-default: #2e2e34;
+  --border-strong: #3d3d45;
+
+  --accent: #7c7cf0;
+  --accent-hover: #8a8af3;
+  --accent-active: #6e6ee4;
+  --accent-fg: #0e0e14;
+  --accent-text: #9b9bf5;
+  --accent-soft: rgb(124 124 240 / 0.16);
+  --accent-soft-border: rgb(124 124 240 / 0.38);
+  --focus-ring: #9b9bf5;
+  --selection-bg: rgb(124 124 240 / 0.28);
+
+  --info: #38bdf8;
+  --info-soft: rgb(56 189 248 / 0.14);
+  --success: #34d399;
+  --success-soft: rgb(52 211 153 / 0.14);
+  --warning: #fbbf24;
+  --warning-soft: rgb(251 191 36 / 0.14);
+  --danger: #f87171;
+  --danger-soft: rgb(248 113 113 / 0.14);
+
+  --method-get: #34d399;
+  --method-post: #fbbf24;
+  --method-put: #60a5fa;
+  --method-patch: #a78bfa;
+  --method-delete: #f87171;
+  --method-head: #2dd4bf;
+  --method-options: #f472b6;
+  --method-custom: #9ca3af;
+
+  --syn-comment: #6e6e79;
+  --syn-string: #5ccfba;
+  --syn-number: #e5a54f;
+  --syn-atom: #c4b5fd;
+  --syn-property: #7fb2f9;
+  --syn-keyword: #f472b6;
+  --syn-function: #c09af5;
+  --syn-definition: #7fb2f9;
+  --syn-operator: #8c8c96;
+  --syn-tag: #f472b6;
+  --syn-attr: #e5a54f;
+  --syn-invalid: #f87171;
+  --syn-link: #7fb2f9;
+  --var-defined: #34d399;
+  --var-defined-bg: rgb(52 211 153 / 0.12);
+  --var-undefined: #f87171;
+  --var-undefined-bg: rgb(248 113 113 / 0.12);
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 4px 16px rgb(0 0 0 / 0.5), 0 0 0 1px var(--border-subtle);
+  --shadow-lg: 0 16px 40px rgb(0 0 0 / 0.6), 0 0 0 1px var(--border-subtle);
+}
+
+/* Re-export as Tailwind theme tokens (bg-surface, text-muted, border-strong…) */
+@theme inline {
+  --color-app: var(--bg-app);
+  --color-surface: var(--bg-surface);
+  --color-raised: var(--bg-raised);
+  --color-overlay: var(--bg-overlay);
+  --color-inset: var(--bg-inset);
+  --color-hover: var(--bg-hover);
+  --color-active: var(--bg-active);
+  --color-selected: var(--bg-selected);
+
+  --color-primary: var(--text-primary);
+  --color-secondary: var(--text-secondary);
+  --color-muted: var(--text-muted);
+  --color-disabled: var(--text-disabled);
+  --color-inverse: var(--text-inverse);
+
+  --color-subtle: var(--border-subtle);
+  --color-default: var(--border-default);
+  --color-strong: var(--border-strong);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-active: var(--accent-active);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-text: var(--accent-text);
+  --color-accent-soft: var(--accent-soft);
+
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+
+  --font-sans: "Inter Variable", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+
+  --text-2xs: 11px;
+  --text-2xs--line-height: 16px;
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-sm: 13px;
+  --text-sm--line-height: 20px;
+  --text-md: 14px;
+  --text-md--line-height: 20px;
+  --text-lg: 16px;
+  --text-lg--line-height: 24px;
+  --text-xl: 18px;
+  --text-xl--line-height: 26px;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+/* ---------- motion ---------- */
+:root {
+  --dur-fast: 80ms;
+  --dur-base: 140ms;
+  --dur-slow: 220ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0.01ms;
+    --dur-base: 0.01ms;
+    --dur-slow: 0.01ms;
+  }
+  *,
+  *::before,
+  *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: reduced-motion must beat all inline durations */
+    animation-duration: 0.01ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: reduced-motion must beat all inline durations */
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------- base plumbing tied to tokens ---------- */
+::selection {
+  background: var(--selection-bg);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* thin custom scrollbars (webkit views on Linux/Windows) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}

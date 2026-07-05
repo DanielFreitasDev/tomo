@@ -1,11 +1,8 @@
 @import "tailwindcss";
+@import "./tokens.css";
 
-/* Full design-token set lands at milestone M9 (tokens.css). */
-
-@theme {
-  --font-sans: "Inter Variable", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
-}
+/* Tailwind v4 dark variant driven by the .dark class on <html> */
+@custom-variant dark (&:where(.dark, .dark *));
 
 html,
 body,
@@ -15,6 +12,33 @@ body,
 
 body {
   font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  background: var(--bg-app);
+  font-feature-settings: "cv05", "cv08", "cv10";
+  text-rendering: optimizeLegibility;
   -webkit-user-select: none;
   user-select: none;
+  overflow: hidden;
+}
+
+/* editors, inputs and value cells are selectable */
+input,
+textarea,
+.cm-editor,
+[data-selectable] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+code,
+kbd,
+pre,
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+/* numeric metrics align in tables */
+[data-tabular] {
+  font-variant-numeric: tabular-nums;
 }
