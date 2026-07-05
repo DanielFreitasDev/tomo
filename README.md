@@ -2,6 +2,8 @@
 
 > A friendly, TOML-native API client. Lightweight, offline, git-first.
 
+![Tomo](docs/media/hero-dark.png)
+
 **Tomo** is a minimalist desktop API client built with Tauri 2 + Rust. Your
 collections are plain folders of readable, hand-editable [TOML files](docs/format.md) —
 no accounts, no cloud, no proprietary database. The name is a triple pun:
