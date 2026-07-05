@@ -105,3 +105,39 @@ test('gallery route renders both themes for visual checks', async ({ page }) => 
   await page.getByLabel('Toggle dark theme').click()
   await expect(page.locator('html')).toHaveClass(/dark/)
 })
+
+test('command palette: fuzzy find a request and switch environment', async ({ page }) => {
+  await page.keyboard.press('Control+k')
+  await expect(page.getByPlaceholder(/command or search/i)).toBeVisible()
+  await page.getByPlaceholder(/command or search/i).fill('Create user')
+  await page
+    .getByRole('option', { name: /Create user/ })
+    .first()
+    .click()
+  await expect(page.getByRole('tab', { name: /Create user/ })).toBeVisible()
+
+  // environment switch via @ mode
+  await page.keyboard.press('Control+k')
+  await page.getByPlaceholder(/command or search/i).fill('@prod')
+  await page.getByRole('option', { name: /prod/ }).first().click()
+  await expect(page.getByLabel('Environments', { exact: true })).toContainText('prod')
+})
+
+test('settings modal opens; theme toggle applies and persists', async ({ page }) => {
+  // the modal itself opens from the shortcut
+  await page.keyboard.press('Control+,')
+  await expect(page.getByRole('dialog')).toBeVisible()
+  await page.keyboard.press('Escape')
+
+  // switch theme via the palette action (deterministic in headless)
+  await page.keyboard.press('Control+k')
+  await page.getByPlaceholder(/command or search/i).fill('Theme')
+  await page.getByRole('option', { name: /Theme/ }).first().click()
+  await expect(page.locator('html')).toHaveClass(/dark/)
+
+  // survives reload (persisted through the mock's localStorage-backed settings;
+  // wait for the 300ms debounce to flush)
+  await page.waitForTimeout(500)
+  await page.reload()
+  await expect(page.locator('html')).toHaveClass(/dark/)
+})

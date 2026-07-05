@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react'
 import { ToastViewport } from '@/components/ui/toast'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { EnvironmentsModal } from '@/features/environments/EnvironmentsModal'
+import { CommandPalette } from '@/features/palette/CommandPalette'
+import { AboutModal } from '@/features/settings/AboutModal'
+import { SettingsModal } from '@/features/settings/SettingsModal'
 import { isTauri } from '@/lib/transport'
 import { bootTransportListeners, openCollection } from '@/stores/actions/fs-actions'
 import { useSettings, watchSystemTheme } from '@/stores/settings'
@@ -37,9 +41,22 @@ export function App() {
 
   if (!loaded) return <div className="h-full bg-app" />
 
+  if (route === '#/gallery') {
+    return (
+      <TooltipProvider>
+        <Gallery />
+        <ToastViewport />
+      </TooltipProvider>
+    )
+  }
+
   return (
     <TooltipProvider>
-      {route === '#/gallery' ? <Gallery /> : <Shell />}
+      <Shell />
+      <CommandPalette />
+      <SettingsModal />
+      <EnvironmentsModal />
+      <AboutModal />
       <ToastViewport />
     </TooltipProvider>
   )
