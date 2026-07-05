@@ -6,6 +6,7 @@
 
 pub mod error;
 pub mod format;
+pub mod fsops;
 pub mod model;
 
 pub use error::CoreError;

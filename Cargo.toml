@@ -23,6 +23,7 @@ thiserror = "2"
 
 # fs / ids / hashing
 blake3 = "1"
+deunicode = "1"
 tempfile = "3"
 walkdir = "2"
 dunce = "1"

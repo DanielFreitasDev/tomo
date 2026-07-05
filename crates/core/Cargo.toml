@@ -14,6 +14,7 @@ indexmap = { workspace = true }
 toml_edit = { workspace = true }
 thiserror = { workspace = true }
 blake3 = { workspace = true }
+deunicode = { workspace = true }
 tempfile = { workspace = true }
 walkdir = { workspace = true }
 dunce = { workspace = true }
