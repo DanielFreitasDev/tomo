@@ -69,6 +69,10 @@ export async function moveNode(id: string, rel: string, newParentRel: string): P
   return newRel
 }
 
+export async function reorderNodes(id: string, orderedRels: string[]): Promise<void> {
+  await transport().invoke('reorder_nodes', { id, ordered_rels: orderedRels })
+}
+
 export async function deleteNode(id: string, rel: string): Promise<void> {
   await transport().invoke('delete_node', { id, rel })
   useCollections.getState().dropRequest(id, rel)

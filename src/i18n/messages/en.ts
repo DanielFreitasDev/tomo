@@ -38,6 +38,7 @@ export const en = {
   'tabs.closeAll': 'Close all',
   'tabs.unsaved': 'Unsaved changes',
   'tabs.confirmClose.title': 'Save changes to “{name}”?',
+  'tabs.confirmCloseMany.title': 'Save changes to {count} tabs?',
   'tabs.confirmClose.body': 'Your changes will be lost if you don’t save them.',
 
   'request.send': 'Send',

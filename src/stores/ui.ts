@@ -4,6 +4,11 @@ import { transport } from '@/lib/transport'
 
 export type ModalKind = 'settings' | 'environments' | 'about' | 'shortcuts' | null
 
+export interface ClosePrompt {
+  tabIds: string[]
+  after?: 'window'
+}
+
 interface UiState {
   sidebarWidth: number
   sidebarCollapsed: boolean
@@ -12,6 +17,7 @@ interface UiState {
   splitOrientation: 'horizontal' | 'vertical'
   paletteOpen: boolean
   modal: ModalKind
+  closePrompt: ClosePrompt | null
 
   setFilter: (filter: string) => void
   toggleSidebar: () => void
@@ -21,6 +27,7 @@ interface UiState {
   toggleSplit: () => void
   setPaletteOpen: (open: boolean) => void
   openModal: (modal: ModalKind) => void
+  setClosePrompt: (prompt: ClosePrompt | null) => void
   hydrate: () => Promise<void>
 }
 
@@ -50,6 +57,7 @@ export const useUi = create<UiState>((set, get) => ({
   splitOrientation: 'horizontal',
   paletteOpen: false,
   modal: null,
+  closePrompt: null,
 
   setFilter(filter) {
     set({ filter })
@@ -85,6 +93,9 @@ export const useUi = create<UiState>((set, get) => ({
   },
   openModal(modal) {
     set({ modal })
+  },
+  setClosePrompt(closePrompt) {
+    set({ closePrompt })
   },
 
   async hydrate() {

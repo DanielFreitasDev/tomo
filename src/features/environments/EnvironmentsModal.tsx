@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/dialog'
 import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
 import { toast } from '@/components/ui/toast'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/cn'
@@ -12,10 +13,74 @@ import { useCollections } from '@/stores/collections'
 import { useEnvironments } from '@/stores/environments'
 import { useUi } from '@/stores/ui'
 
-interface VarRow {
+export type EnvVarType = 'string' | 'number' | 'boolean' | 'json' | 'secret'
+
+export interface VarRow {
   name: string
   value: string
-  secret: boolean
+  type: EnvVarType
+}
+
+const VAR_TYPES: EnvVarType[] = ['string', 'number', 'boolean', 'json', 'secret']
+
+export function rowsFromEnvironment(env: EnvironmentDto): VarRow[] {
+  const secrets = new Set(env.meta.secrets ?? [])
+  const names = new Set([...Object.keys(env.vars), ...secrets])
+  return [...names].map((name) => {
+    const value = env.vars[name] ?? ''
+    return {
+      name,
+      value: valueToText(value),
+      type: secrets.has(name) ? 'secret' : typeOfValue(value),
+    }
+  })
+}
+
+export function environmentFromRows(name: string, rows: VarRow[]): EnvironmentDto {
+  const vars: Record<string, unknown> = {}
+  const secrets: string[] = []
+  for (const row of rows) {
+    if (!row.name) continue
+    if (row.type === 'secret') {
+      secrets.push(row.name)
+    } else {
+      vars[row.name] = parseRowValue(row)
+    }
+  }
+  return { meta: { name, secrets }, vars }
+}
+
+function typeOfValue(value: unknown): EnvVarType {
+  if (typeof value === 'number') return 'number'
+  if (typeof value === 'boolean') return 'boolean'
+  if (typeof value === 'string') return 'string'
+  return 'json'
+}
+
+function valueToText(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  return JSON.stringify(value, null, 2)
+}
+
+function parseRowValue(row: VarRow): unknown {
+  switch (row.type) {
+    case 'number': {
+      const n = Number(row.value)
+      return Number.isFinite(n) ? n : 0
+    }
+    case 'boolean':
+      return row.value === 'true'
+    case 'json':
+      try {
+        return JSON.parse(row.value)
+      } catch {
+        return row.value
+      }
+    case 'string':
+    case 'secret':
+      return row.value
+  }
 }
 
 export function EnvironmentsModal() {
@@ -46,14 +111,7 @@ export function EnvironmentsModal() {
     void transport()
       .invoke('read_environment', { id: collectionId, name: active })
       .then((env) => {
-        const secrets = new Set(env.meta.secrets ?? [])
-        setRows(
-          Object.entries(env.vars).map(([name, v]) => ({
-            name,
-            value: typeof v === 'string' ? v : JSON.stringify(v),
-            secret: secrets.has(name),
-          })),
-        )
+        setRows(rowsFromEnvironment(env))
       })
       .catch(() => setRows([]))
     void transport()
@@ -66,26 +124,19 @@ export function EnvironmentsModal() {
 
   const save = async () => {
     if (!active) return
-    const vars: Record<string, unknown> = {}
-    const secrets: string[] = []
     const secretVals: Record<string, string> = {}
     for (const row of rows) {
       if (!row.name) continue
-      if (row.secret) {
-        secrets.push(row.name)
-        if (secretValues[row.name]) secretVals[row.name] = secretValues[row.name] ?? ''
-      } else {
-        vars[row.name] = row.value
+      if (row.type === 'secret') {
+        secretVals[row.name] = String(secretValues[row.name] ?? '')
       }
     }
-    const env: EnvironmentDto = { meta: { name: active, secrets }, vars }
+    const env = environmentFromRows(active, rows)
     await transport().invoke('save_environment', { id: collectionId, name: active, env })
     setEnvStore(collectionId, env)
-    if (Object.keys(secretVals).length > 0) {
-      const current = await transport().invoke('read_secrets', { id: collectionId })
-      current.environments[active] = { ...(current.environments[active] ?? {}), ...secretVals }
-      await transport().invoke('save_secrets', { id: collectionId, secrets: current })
-    }
+    const current = await transport().invoke('read_secrets', { id: collectionId })
+    current.environments[active] = secretVals
+    await transport().invoke('save_secrets', { id: collectionId, secrets: current })
     toast.success(t('toast.saved'), active)
   }
 
@@ -154,26 +205,61 @@ export function EnvironmentsModal() {
                         setRows(rows.map((r, x) => (x === i ? { ...r, name: e.target.value } : r)))
                       }
                     />
-                    <Input
-                      inputSize="sm"
-                      mono
-                      className="flex-1"
-                      type={row.secret ? 'password' : 'text'}
-                      placeholder={row.secret ? '•••• (stored in secrets.toml)' : 'value'}
-                      value={row.secret ? (secretValues[row.name] ?? '') : row.value}
-                      onChange={(e) => {
-                        if (row.secret) setSecretValues({ ...secretValues, [row.name]: e.target.value })
-                        else setRows(rows.map((r, x) => (x === i ? { ...r, value: e.target.value } : r)))
-                      }}
-                    />
-                    <IconButton
-                      label="Secret"
+                    <Select
+                      ariaLabel="Type"
                       size="sm"
-                      variant={row.secret ? 'soft' : 'ghost'}
-                      onClick={() => setRows(rows.map((r, x) => (x === i ? { ...r, secret: !r.secret } : r)))}
-                    >
-                      <KeyRound size={13} />
-                    </IconButton>
+                      value={row.type}
+                      onChange={(type) => {
+                        setRows(
+                          rows.map((r, x) => {
+                            if (x !== i) return r
+                            return {
+                              ...r,
+                              type,
+                              value:
+                                r.type === 'secret' && type !== 'secret'
+                                  ? (secretValues[r.name] ?? r.value)
+                                  : r.value,
+                            }
+                          }),
+                        )
+                        if (type === 'secret' && row.name && secretValues[row.name] === undefined) {
+                          setSecretValues({ ...secretValues, [row.name]: row.value })
+                        }
+                      }}
+                      options={VAR_TYPES.map((type) => ({ value: type, label: type }))}
+                      triggerClassName="w-24"
+                    />
+                    {row.type === 'boolean' ? (
+                      <Select
+                        ariaLabel="Value"
+                        size="sm"
+                        value={row.value === 'true' ? 'true' : 'false'}
+                        onChange={(value) => setRows(rows.map((r, x) => (x === i ? { ...r, value } : r)))}
+                        options={[
+                          { value: 'true', label: 'true' },
+                          { value: 'false', label: 'false' },
+                        ]}
+                        triggerClassName="flex-1"
+                      />
+                    ) : (
+                      <Input
+                        inputSize="sm"
+                        mono
+                        className="flex-1"
+                        type={row.type === 'secret' ? 'password' : row.type === 'number' ? 'number' : 'text'}
+                        placeholder={row.type === 'secret' ? 'stored in secrets.toml' : 'value'}
+                        value={row.type === 'secret' ? (secretValues[row.name] ?? '') : row.value}
+                        onChange={(e) => {
+                          if (row.type === 'secret') {
+                            setSecretValues({ ...secretValues, [row.name]: e.target.value })
+                          } else {
+                            setRows(rows.map((r, x) => (x === i ? { ...r, value: e.target.value } : r)))
+                          }
+                        }}
+                      />
+                    )}
+                    {row.type === 'secret' ? <KeyRound size={13} className="shrink-0 text-muted" /> : null}
                     <IconButton
                       label={t('common.delete')}
                       size="sm"
@@ -188,7 +274,7 @@ export function EnvironmentsModal() {
                     variant="ghost"
                     size="sm"
                     icon={<Plus size={12} />}
-                    onClick={() => setRows([...rows, { name: '', value: '', secret: false }])}
+                    onClick={() => setRows([...rows, { name: '', value: '', type: 'string' }])}
                   >
                     {t('common.add')}
                   </Button>

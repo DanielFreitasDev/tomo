@@ -29,12 +29,17 @@ struct FileChangedPayload {
 pub fn start(app: AppHandle, id: String, runtime: Arc<CollectionRuntime>) {
     let root = runtime.root.clone();
     let suppressor: Arc<WriteSuppressor> = runtime.suppressor.clone();
-    let selected = runtime.selected_env.lock().ok().and_then(|g| g.clone());
+    let runtime_for_events = runtime.clone();
 
     let handler = move |event: WatchEvent| match event {
         WatchEvent::TreeChanged => {
             if let Ok(tree) = scan_collection(&root) {
                 let envs = list_environments(&root);
+                let selected = runtime_for_events
+                    .selected_env
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.clone());
                 let dto = CollectionTreeDto::build(&id, &tree, envs, selected.clone());
                 let _ = app.emit(
                     "watcher:tree-changed",

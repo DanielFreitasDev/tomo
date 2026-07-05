@@ -41,6 +41,32 @@ test('open request in a tab and send it against the mock', async ({ page }) => {
   await expect(page.getByText(/ms/).first()).toBeVisible()
 })
 
+test('request bar accepts and sends a custom HTTP method', async ({ page }) => {
+  const tree = page.getByRole('tree')
+  await tree.getByText('Health check').dblclick()
+
+  await page.getByLabel('Method').fill('PROPFIND')
+  await page.getByRole('button', { name: 'Send' }).click()
+
+  await expect(page.getByText(/200/).first()).toBeVisible()
+  await expect(page.getByText('"method": "PROPFIND"')).toBeVisible()
+})
+
+test('tree drag-and-drop reorders siblings in the mock workspace', async ({ page }) => {
+  const tree = page.getByRole('tree')
+  await tree.getByText('Users').click()
+
+  const list = tree.getByText('List users')
+  const create = tree.getByText('Create user')
+  await list.dragTo(create)
+
+  await expect(async () => {
+    const listBox = await list.boundingBox()
+    const createBox = await create.boundingBox()
+    expect(listBox?.y ?? 0).toBeGreaterThan(createBox?.y ?? Number.MAX_SAFE_INTEGER)
+  }).toPass()
+})
+
 test('node CRUD: create, rename via F2, delete via context menu', async ({ page }) => {
   const tree = page.getByRole('tree')
 
@@ -96,6 +122,38 @@ test('tabs: preview replacement, promotion, dirty dot, close and reopen', async 
   await expect(page.getByRole('tab', { name: /List users/ })).toBeHidden()
   await page.keyboard.press('Control+Shift+t')
   await expect(page.getByRole('tab', { name: /List users/ })).toBeVisible()
+})
+
+test('dirty tab close can cancel or discard changes', async ({ page }) => {
+  const tree = page.getByRole('tree')
+  await tree.getByText('Health check').dblclick()
+
+  const url = page.getByLabel('Request URL')
+  await url.click()
+  await url.fill('https://api.test/edited')
+  await page.keyboard.press('Control+w')
+
+  await expect(page.getByText(/Save changes to/)).toBeVisible()
+  await page.getByRole('button', { name: 'Cancel' }).click()
+  await expect(page.getByRole('tab', { name: /Health check/ })).toBeVisible()
+
+  await page.keyboard.press('Control+w')
+  await page.getByRole('button', { name: 'Discard' }).click()
+  await expect(page.getByRole('tab', { name: /Health check/ })).toBeHidden()
+})
+
+test('binary mock response previews safely and downloads with browser blob', async ({ page }) => {
+  const tree = page.getByRole('tree')
+  await tree.getByText('Health check').dblclick()
+
+  await page.getByLabel('Request URL').fill('https://api.test/binary')
+  await page.getByRole('button', { name: 'Send' }).click()
+  await expect(page.getByText(/binary body/)).toBeVisible()
+
+  const downloadPromise = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Download' }).click()
+  const download = await downloadPromise
+  expect(download.suggestedFilename()).toBe('binary.bin')
 })
 
 test('gallery route renders both themes for visual checks', async ({ page }) => {

@@ -166,7 +166,11 @@ export interface ResponseMetaDto {
   timing: { total_ms: number; ttfb_ms: number; download_ms: number }
   body: {
     total_size: number
+    /** Bytes available through get_response_body; may be smaller than total_size. */
+    preview_size: number
     truncated: boolean
+    has_spill: boolean
+    can_download_full: boolean
     mime?: string
     charset?: string
     is_binary: boolean
@@ -215,6 +219,7 @@ export interface RecentCollectionDto {
 export interface Commands {
   // collections
   pick_collection_folder: { args: Record<string, never>; result: string | null }
+  pick_save_file: { args: { default_name?: string }; result: string | null }
   open_collection: { args: { path: string }; result: CollectionTreeDto }
   create_collection: { args: { parent_dir: string; name: string }; result: CollectionTreeDto }
   close_collection: { args: { id: string }; result: null }
@@ -255,7 +260,9 @@ export interface Commands {
     result: ResponseMetaDto
   }
   cancel_request: { args: { run_id: string }; result: boolean }
+  /** Returns preview bytes only; large full bodies must use save_response_body. */
   get_response_body: { args: { run_id: string }; result: Uint8Array }
+  /** Saves the complete captured body, including spill files, while the run is cached. */
   save_response_body: { args: { run_id: string; dest: string }; result: null }
   get_cookies: { args: { id: string }; result: CookieDto[] }
   clear_cookies: { args: { id: string; domain?: string }; result: null }

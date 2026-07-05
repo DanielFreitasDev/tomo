@@ -20,11 +20,13 @@ import {
   duplicateRequest,
   moveNode,
   renameNode,
+  reorderNodes,
 } from '@/stores/actions/fs-actions'
 import { openRequestTab } from '@/stores/actions/tab-actions'
 import { useTabs } from '@/stores/tabs'
 import { useUi } from '@/stores/ui'
 import { flattenVisible, type VisibleRow } from './flatten'
+import { orderedRelsAfterDrop, parentRelOf } from './reorder'
 
 const ROW_HEIGHT = 28
 
@@ -160,15 +162,18 @@ export function Tree({ collectionId, nodes }: { collectionId: string; nodes: Tre
   const onDrop = async (e: React.DragEvent, row: VisibleRow) => {
     e.preventDefault()
     const sourceRel = e.dataTransfer.getData('application/x-tomo-rel')
+    const mode = dropTarget?.rel === row.rel ? dropTarget.mode : 'after'
     setDropTarget(null)
     if (!sourceRel || sourceRel === row.rel) return
-    const targetParent = row.kind === 'folder' && dropTarget?.mode === 'into' ? row.rel : row.parentRel
-    const sourceParent = sourceRel.includes('/') ? sourceRel.slice(0, sourceRel.lastIndexOf('/')) : ''
+    const targetParent = row.kind === 'folder' && mode === 'into' ? row.rel : row.parentRel
+    const sourceParent = parentRelOf(sourceRel)
     try {
+      let movedRel = sourceRel
       if (targetParent !== sourceParent) {
-        await moveNode(collectionId, sourceRel, targetParent)
+        movedRel = await moveNode(collectionId, sourceRel, targetParent)
       }
-      // sibling reorder is applied on the next tree refresh via seq rewrite
+      const orderedRels = orderedRelsAfterDrop(nodes, sourceRel, movedRel, row.rel, mode)
+      if (orderedRels.length > 0) await reorderNodes(collectionId, orderedRels)
     } catch (err) {
       toast.danger(t('toast.error'), err instanceof Error ? err.message : String(err))
     }

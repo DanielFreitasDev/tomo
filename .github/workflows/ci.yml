@@ -35,11 +35,11 @@ jobs:
       - name: Format
         run: cargo fmt --check
 
-      - name: Clippy (core)
-        run: cargo clippy -p tomo-core --all-targets -- -D warnings
+      - name: Clippy (workspace)
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Test (core)
-        run: cargo test -p tomo-core
+      - name: Test (workspace)
+        run: cargo test --workspace --all-targets
 
   frontend:
     name: Frontend

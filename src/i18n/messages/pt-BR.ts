@@ -40,6 +40,7 @@ export const ptBR: Record<MessageKey, string> = {
   'tabs.closeAll': 'Fechar todas',
   'tabs.unsaved': 'Alterações não salvas',
   'tabs.confirmClose.title': 'Salvar alterações em “{name}”?',
+  'tabs.confirmCloseMany.title': 'Salvar alterações em {count} abas?',
   'tabs.confirmClose.body': 'Suas alterações serão perdidas se você não salvá-las.',
 
   'request.send': 'Enviar',

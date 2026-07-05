@@ -2,8 +2,7 @@ import { Send, Square, TriangleAlert } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { CodeEditor } from '@/components/ui/code-editor'
-import { MethodBadge } from '@/components/ui/method-badge'
-import { Select } from '@/components/ui/select'
+import { Input } from '@/components/ui/input'
 import { TabPanel, UnderlineTabs } from '@/components/ui/tabs'
 import { useT } from '@/i18n'
 import { cancelActiveRequest, sendActiveRequest } from '@/stores/actions/request-actions'
@@ -54,12 +53,23 @@ export function RequestPane({ tab }: { tab: Tab }) {
       ) : null}
 
       <div className="flex shrink-0 items-center gap-1.5 p-2">
-        <Select
-          ariaLabel="Method"
-          value={(METHODS as readonly string[]).includes(request.http.method) ? request.http.method : 'GET'}
-          onChange={(m) => editTab(tab.id, (d) => ({ ...d, http: { ...d.http, method: m } }))}
-          options={METHODS.map((m) => ({ value: m, label: <MethodBadge method={m} block /> }))}
+        <Input
+          aria-label="Method"
+          className="h-9 w-28 shrink-0"
+          inputSize="md"
+          mono
+          list={`http-methods-${tab.id}`}
+          value={request.http.method}
+          onChange={(e) => editTab(tab.id, (d) => ({ ...d, http: { ...d.http, method: e.target.value } }))}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void sendActiveRequest(tab.id)
+          }}
         />
+        <datalist id={`http-methods-${tab.id}`}>
+          {METHODS.map((method) => (
+            <option key={method} value={method} />
+          ))}
+        </datalist>
         <div className="flex h-9 min-w-0 flex-1 items-center rounded-md border border-default bg-raised px-2 transition-colors focus-within:border-(--accent) focus-within:ring-2 focus-within:ring-(--accent-soft)">
           <CodeEditor
             singleLine

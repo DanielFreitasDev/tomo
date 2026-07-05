@@ -30,3 +30,6 @@ indexmap = { workspace = true }
 lru = { workspace = true }
 dunce = { workspace = true }
 blake3 = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

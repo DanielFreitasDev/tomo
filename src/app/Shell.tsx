@@ -7,7 +7,7 @@ import { Sidebar } from '@/features/sidebar/Sidebar'
 import { useT } from '@/i18n'
 import { installKeyboardListener, registerShortcuts } from '@/lib/keys/keymap'
 import { cancelActiveRequest, sendActiveRequest } from '@/stores/actions/request-actions'
-import { closeTab, reopenLastClosed, saveAllTabs, saveTab } from '@/stores/actions/tab-actions'
+import { closeAllTabs, closeTab, reopenLastClosed, saveAllTabs, saveTab } from '@/stores/actions/tab-actions'
 import { useTabs } from '@/stores/tabs'
 import { useUi } from '@/stores/ui'
 import { Titlebar } from './Titlebar'
@@ -61,7 +61,7 @@ export function Shell() {
         },
       },
       { id: 'reopen-tab', combo: 'mod+shift+t', inInputs: true, run: () => void reopenLastClosed() },
-      { id: 'close-all', combo: 'mod+shift+w', inInputs: true, run: () => useTabs.getState().closeAll() },
+      { id: 'close-all', combo: 'mod+shift+w', inInputs: true, run: () => closeAllTabs() },
       { id: 'toggle-sidebar', combo: 'mod+b', inInputs: true, run: () => useUi.getState().toggleSidebar() },
       { id: 'toggle-split', combo: 'mod+j', inInputs: true, run: () => useUi.getState().toggleSplit() },
       { id: 'palette', combo: 'mod+k', inInputs: true, run: () => useUi.getState().setPaletteOpen(true) },

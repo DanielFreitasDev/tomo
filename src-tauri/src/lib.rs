@@ -28,6 +28,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::pick_collection_folder,
+            commands::pick_save_file,
             commands::list_recent_collections,
             commands::open_collection,
             commands::create_collection,

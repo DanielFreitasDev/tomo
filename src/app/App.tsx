@@ -5,8 +5,10 @@ import { EnvironmentsModal } from '@/features/environments/EnvironmentsModal'
 import { CommandPalette } from '@/features/palette/CommandPalette'
 import { AboutModal } from '@/features/settings/AboutModal'
 import { SettingsModal } from '@/features/settings/SettingsModal'
+import { DirtyCloseDialog } from '@/features/tabs/DirtyCloseDialog'
 import { isTauri } from '@/lib/transport'
 import { bootTransportListeners, openCollection } from '@/stores/actions/fs-actions'
+import { requestCloseWindow, shouldAllowWindowClose } from '@/stores/actions/tab-actions'
 import { useSettings, watchSystemTheme } from '@/stores/settings'
 import { useUi } from '@/stores/ui'
 import { Gallery } from './Gallery'
@@ -39,6 +41,29 @@ export function App() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!isTauri()) return
+    let disposed = false
+    let unlisten: (() => void) | undefined
+    void import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
+      if (disposed) return
+      void getCurrentWindow()
+        .onCloseRequested((event) => {
+          if (shouldAllowWindowClose()) return
+          event.preventDefault()
+          requestCloseWindow()
+        })
+        .then((fn) => {
+          if (disposed) fn()
+          else unlisten = fn
+        })
+    })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [])
+
   if (!loaded) return <div className="h-full bg-app" />
 
   if (route === '#/gallery') {
@@ -57,6 +82,7 @@ export function App() {
       <SettingsModal />
       <EnvironmentsModal />
       <AboutModal />
+      <DirtyCloseDialog />
       <ToastViewport />
     </TooltipProvider>
   )

@@ -3,6 +3,7 @@ import { type RequestFileDto, transport } from '@/lib/transport'
 import { requestKey, useCollections } from '@/stores/collections'
 import { useResponses } from '@/stores/responses'
 import { type Tab, useTabs } from '@/stores/tabs'
+import { useUi } from '@/stores/ui'
 
 export async function openRequestTab(
   collectionId: string,
@@ -110,7 +111,89 @@ export function keepMyChanges(tabId: string): void {
   tabs.setConflict(tabId, 'none')
 }
 
+let allowWindowClose = false
+
+function closeTabsNow(tabIds: string[]): void {
+  for (const tabId of tabIds) {
+    if (!useTabs.getState().byId(tabId)) continue
+    useResponses.getState().clear(tabId)
+    useTabs.getState().close(tabId)
+  }
+}
+
+function requestCloseTabs(tabIds: string[], after?: 'window'): void {
+  const tabs = useTabs.getState()
+  const existing = tabIds.filter((id) => tabs.byId(id))
+  if (existing.length === 0) {
+    if (after === 'window') void closeWindowNow()
+    return
+  }
+  const hasDirty = existing.some((id) => tabs.byId(id)?.draft !== null)
+  if (hasDirty) {
+    useUi.getState().setClosePrompt({ tabIds: existing, after })
+    return
+  }
+  closeTabsNow(existing)
+  if (after === 'window') void closeWindowNow()
+}
+
+async function closeWindowNow(): Promise<void> {
+  allowWindowClose = true
+  const { getCurrentWindow } = await import('@tauri-apps/api/window')
+  await getCurrentWindow().close()
+}
+
+export function shouldAllowWindowClose(): boolean {
+  return allowWindowClose
+}
+
 export function closeTab(tabId: string): void {
+  requestCloseTabs([tabId])
+}
+
+export function closeOtherTabs(tabId: string): void {
+  const ids = useTabs
+    .getState()
+    .tabs.filter((tab) => tab.id !== tabId)
+    .map((tab) => tab.id)
+  requestCloseTabs(ids)
+}
+
+export function closeAllTabs(): void {
+  requestCloseTabs(useTabs.getState().tabs.map((tab) => tab.id))
+}
+
+export function requestCloseWindow(): void {
+  requestCloseTabs(
+    useTabs.getState().tabs.map((tab) => tab.id),
+    'window',
+  )
+}
+
+export async function resolveClosePrompt(action: 'save' | 'discard' | 'cancel'): Promise<void> {
+  const prompt = useUi.getState().closePrompt
+  if (!prompt) return
+  if (action === 'cancel') {
+    useUi.getState().setClosePrompt(null)
+    return
+  }
+  if (action === 'save') {
+    for (const tabId of prompt.tabIds) {
+      const tab = useTabs.getState().byId(tabId)
+      if (!tab?.draft) continue
+      const outcome = await saveTab(tabId)
+      if (outcome === 'conflict') {
+        useUi.getState().setClosePrompt(null)
+        return
+      }
+    }
+  }
+  useUi.getState().setClosePrompt(null)
+  closeTabsNow(prompt.tabIds)
+  if (prompt.after === 'window') await closeWindowNow()
+}
+
+export function closeTabImmediately(tabId: string): void {
   useResponses.getState().clear(tabId)
   useTabs.getState().close(tabId)
 }

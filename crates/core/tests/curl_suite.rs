@@ -1,8 +1,10 @@
 //! cURL import/export corpus + round-trip.
 
+use indexmap::IndexMap;
 use pretty_assertions::assert_eq;
-use tomo_core::curl::{from_curl, to_curl};
+use tomo_core::curl::{from_curl, to_curl, to_curl_interpolated};
 use tomo_core::model::*;
+use tomo_core::vars::{StackInputs, VarStack};
 
 #[test]
 fn simple_get() {
@@ -156,4 +158,34 @@ fn export_quotes_special_characters() {
     assert!(curl.contains(r#"'it'\''s a test'"#), "{curl}");
     // and it re-imports
     assert!(from_curl(&curl).is_ok());
+}
+
+#[test]
+fn export_can_interpolate_or_preserve_templates() {
+    let mut vars = IndexMap::new();
+    vars.insert(
+        "base_url".to_string(),
+        serde_json::Value::String("https://api.test".to_string()),
+    );
+    vars.insert(
+        "token".to_string(),
+        serde_json::Value::String("tok-123".to_string()),
+    );
+
+    let mut r = RequestFile::default();
+    r.http.url = "{{base_url}}/users".into();
+    r.http.headers = vec![Pair::new("Authorization", "Bearer {{token}}")];
+
+    let stack = VarStack::build(StackInputs {
+        collection_vars: Some(&vars),
+        ..Default::default()
+    });
+
+    assert!(to_curl(&r).contains("{{base_url}}/users"));
+    let interpolated = to_curl_interpolated(&r, &stack);
+    assert!(
+        interpolated.contains("https://api.test/users"),
+        "{interpolated}"
+    );
+    assert!(interpolated.contains("Bearer tok-123"), "{interpolated}");
 }

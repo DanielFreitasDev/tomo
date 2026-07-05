@@ -1,5 +1,5 @@
 import { Check, Copy, Download, SendHorizonal } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { CodeEditor, type EditorLanguage } from '@/components/ui/code-editor'
@@ -11,7 +11,7 @@ import { StatusPill } from '@/components/ui/status-pill'
 import { Segmented, TabPanel, UnderlineTabs } from '@/components/ui/tabs'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/cn'
-import type { ResponseMetaDto } from '@/lib/transport'
+import { isTauri, type ResponseMetaDto, transport } from '@/lib/transport'
 import { cancelActiveRequest } from '@/stores/actions/request-actions'
 import { useResponses } from '@/stores/responses'
 import type { Tab } from '@/stores/tabs'
@@ -41,10 +41,11 @@ export function ResponsePane({ tab }: { tab: Tab }) {
 
   const meta = state.phase === 'done' ? state.meta : undefined
   const bytes = state.phase === 'done' ? state.bodyBytes : undefined
+  const runId = state.phase === 'done' ? state.runId : undefined
 
   const bodyText = useMemo(() => {
     if (!bytes || !meta) return ''
-    if (meta.body.total_size > MOUNT_MAX) return ''
+    if (bytes.byteLength > MOUNT_MAX) return ''
     return new TextDecoder(meta.body.charset ?? 'utf-8', { fatal: false }).decode(bytes)
   }, [bytes, meta])
 
@@ -118,15 +119,22 @@ export function ResponsePane({ tab }: { tab: Tab }) {
     setTimeout(() => setCopied(false), 1500)
   }
 
-  const downloadBody = () => {
+  const downloadBody = async () => {
     if (!bytes) return
+    if (isTauri()) {
+      if (!runId || !meta.body.can_download_full) return
+      const dest = await transport().invoke('pick_save_file', { default_name: responseFileName(meta) })
+      if (!dest) return
+      await transport().invoke('save_response_body', { run_id: runId, dest })
+      return
+    }
     const blob = new Blob([bytes.slice() as unknown as BlobPart], {
       type: meta.body.mime ?? 'application/octet-stream',
     })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = 'response.bin'
+    a.download = responseFileName(meta)
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -145,11 +153,17 @@ export function ResponsePane({ tab }: { tab: Tab }) {
         <IconButton
           label={copied ? t('common.copied') : t('common.copy')}
           size="sm"
+          disabled={!bodyText}
           onClick={() => void copyBody()}
         >
           {copied ? <Check size={13} style={{ color: 'var(--success)' }} /> : <Copy size={13} />}
         </IconButton>
-        <IconButton label={t('common.download')} size="sm" onClick={downloadBody}>
+        <IconButton
+          label={t('common.download')}
+          size="sm"
+          disabled={!meta.body.can_download_full}
+          onClick={() => void downloadBody()}
+        >
           <Download size={13} />
         </IconButton>
       </div>
@@ -200,6 +214,7 @@ export function ResponsePane({ tab }: { tab: Tab }) {
             <BodyView
               view={view}
               meta={meta}
+              bytes={bytes}
               bodyText={bodyText}
               prettyText={prettyText}
               language={language}
@@ -247,12 +262,14 @@ function Banner({ tone, text }: { tone: 'warning' | 'danger'; text: string }) {
 function BodyView({
   view,
   meta,
+  bytes,
   bodyText,
   prettyText,
   language,
 }: {
   view: BodyView
   meta: ResponseMetaDto
+  bytes?: Uint8Array
   bodyText: string
   prettyText: string
   language: EditorLanguage
@@ -267,7 +284,7 @@ function BodyView({
       </div>
     )
   }
-  if (meta.body.total_size > MOUNT_MAX) {
+  if ((bytes?.byteLength ?? 0) > MOUNT_MAX) {
     return (
       <pre data-selectable className="h-full overflow-auto p-3 font-mono text-xs text-primary">
         {new TextDecoder().decode(new Uint8Array())}
@@ -278,7 +295,7 @@ function BodyView({
 
   if (view === 'preview') {
     if (meta.body.mime?.startsWith('image/')) {
-      return <ImagePreview mime={meta.body.mime} text={bodyText} />
+      return bytes ? <ImagePreview mime={meta.body.mime} bytes={bytes} /> : null
     }
     if (meta.body.mime?.includes('html')) {
       return (
@@ -298,11 +315,13 @@ function BodyView({
   }
 
   // raw / pretty text views with size guardrails
-  if (meta.body.total_size > HIGHLIGHT_MAX) {
+  if ((bytes?.byteLength ?? 0) > HIGHLIGHT_MAX || meta.body.truncated) {
     return (
       <pre data-selectable className="h-full overflow-auto p-3 font-mono text-xs leading-5 text-primary">
         {bodyText.slice(0, HEAD_PREVIEW)}
-        {bodyText.length > HEAD_PREVIEW ? '\n… (head shown — download for the full body)' : ''}
+        {bodyText.length > HEAD_PREVIEW || meta.body.truncated
+          ? '\n... (preview shown - download for the full body)'
+          : ''}
       </pre>
     )
   }
@@ -318,19 +337,40 @@ function BodyView({
   )
 }
 
-function ImagePreview({ mime, text }: { mime: string; text: string }) {
-  // bodyText was decoded as text; rebuild bytes for the data URL
-  const src = useMemo(() => {
-    const bytes = new TextEncoder().encode(text)
-    let binary = ''
-    for (const b of bytes) binary += String.fromCharCode(b)
-    return `data:${mime};base64,${btoa(binary)}`
-  }, [mime, text])
+function ImagePreview({ mime, bytes }: { mime: string; bytes: Uint8Array }) {
+  const [src, setSrc] = useState<string | null>(null)
+
+  useEffect(() => {
+    const url = URL.createObjectURL(
+      new Blob([bytes.slice() as unknown as BlobPart], {
+        type: mime,
+      }),
+    )
+    setSrc(url)
+    return () => URL.revokeObjectURL(url)
+  }, [bytes, mime])
+
+  if (!src) return null
   return (
     <div className="flex h-full items-center justify-center overflow-auto bg-inset p-4">
       <img src={src} alt="Response preview" className="max-h-full max-w-full" />
     </div>
   )
+}
+
+function responseFileName(meta: ResponseMetaDto): string {
+  const urlName = meta.final_url.split(/[/?#]/).filter(Boolean).pop()
+  const ext = meta.body.mime?.includes('json')
+    ? 'json'
+    : meta.body.mime?.includes('html')
+      ? 'html'
+      : meta.body.mime?.includes('xml')
+        ? 'xml'
+        : meta.body.mime?.startsWith('image/')
+          ? meta.body.mime.slice('image/'.length)
+          : 'bin'
+  const base = (urlName || 'response').replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
+  return base.includes('.') ? base : `${base || 'response'}.${ext}`
 }
 
 function TestsView({ meta }: { meta: ResponseMetaDto }) {

@@ -4,7 +4,7 @@ import { ContextMenu } from '@/components/ui/menu'
 import { MethodBadge } from '@/components/ui/method-badge'
 import { useT } from '@/i18n'
 import { cn } from '@/lib/cn'
-import { closeTab } from '@/stores/actions/tab-actions'
+import { closeAllTabs, closeOtherTabs, closeTab } from '@/stores/actions/tab-actions'
 import { type Tab, useTabs } from '@/stores/tabs'
 
 export function TabStrip() {
@@ -13,8 +13,6 @@ export function TabStrip() {
   const activeId = useTabs((s) => s.activeId)
   const activate = useTabs((s) => s.activate)
   const promote = useTabs((s) => s.promote)
-  const closeOthers = useTabs((s) => s.closeOthers)
-  const closeAll = useTabs((s) => s.closeAll)
   const reorder = useTabs((s) => s.reorder)
   const [dragIndex, setDragIndex] = useState<number | null>(null)
 
@@ -34,8 +32,8 @@ export function TabStrip() {
           onActivate={() => activate(tab.id)}
           onPromote={() => promote(tab.id)}
           onClose={() => closeTab(tab.id)}
-          onCloseOthers={() => closeOthers(tab.id)}
-          onCloseAll={closeAll}
+          onCloseOthers={() => closeOtherTabs(tab.id)}
+          onCloseAll={closeAllTabs}
           labels={{
             close: t('tabs.closeTab'),
             closeOthers: t('tabs.closeOthers'),

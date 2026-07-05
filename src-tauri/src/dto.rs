@@ -74,7 +74,10 @@ pub struct ResponseMetaDto {
 #[derive(Serialize)]
 pub struct BodyMetaDto {
     pub total_size: u64,
+    pub preview_size: u64,
     pub truncated: bool,
+    pub has_spill: bool,
+    pub can_download_full: bool,
     pub mime: Option<String>,
     pub charset: Option<String>,
     pub is_binary: bool,
@@ -91,7 +94,10 @@ impl ResponseMetaDto {
             timing: serde_json::to_value(data.timing).unwrap_or(serde_json::Value::Null),
             body: BodyMetaDto {
                 total_size: data.body.total_size,
+                preview_size: data.body.bytes.len() as u64,
                 truncated: data.body.truncated,
+                has_spill: data.body.spill_path.is_some(),
+                can_download_full: true,
                 mime: data.body.mime.clone(),
                 charset: data.body.charset.clone(),
                 is_binary: data.body.is_binary,

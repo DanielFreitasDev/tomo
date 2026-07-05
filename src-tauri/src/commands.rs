@@ -2,7 +2,7 @@
 //! and shapes DTOs. Self-writes register with the suppressor so the watcher
 //! doesn't echo them back.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -21,8 +21,8 @@ use tomo_core::fsops::{
     scan_collection,
 };
 use tomo_core::http::{Chain, EngineConfig, RunSpec, execute};
-use tomo_core::model::{EnvironmentFile, RequestFile, SecretsFile, Settings};
-use tomo_core::vars::process_env_snapshot;
+use tomo_core::model::{EnvironmentFile, RequestFile, ResponseData, SecretsFile, Settings};
+use tomo_core::vars::{StackInputs, VarStack, process_env_snapshot};
 use tomo_core::watch::content_hash;
 
 use crate::dto::{CollectionTreeDto, ReadRequestDto, ResponseMetaDto, SaveResultDto};
@@ -67,13 +67,46 @@ pub struct RecentEntry {
     pub name: String,
 }
 
-#[tauri::command]
-pub fn list_recent_collections(state: State<'_, AppState>) -> ApiResult<Vec<RecentEntry>> {
-    let path = state.config_dir.join("recents.json");
-    Ok(std::fs::read_to_string(&path)
+fn recents_path(state: &AppState) -> PathBuf {
+    state.config_dir.join("recents.json")
+}
+
+fn load_recents(state: &AppState) -> Vec<RecentEntry> {
+    std::fs::read_to_string(recents_path(state))
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default())
+        .unwrap_or_default()
+}
+
+fn store_recents(state: &AppState, recents: &[RecentEntry]) -> ApiResult<()> {
+    std::fs::create_dir_all(&state.config_dir)
+        .map_err(|e| ApiError::from(tomo_core::CoreError::io(&state.config_dir, e)))?;
+    let path = recents_path(state);
+    let text = serde_json::to_string_pretty(recents)
+        .map_err(|e| ApiError::new("invalid", format!("failed to serialize recents: {e}")))?;
+    atomic_write(&path, &text)?;
+    Ok(())
+}
+
+fn touch_recent_collection(state: &AppState, path: &str, name: &str) -> ApiResult<()> {
+    let mut recents = load_recents(state)
+        .into_iter()
+        .filter(|entry| entry.path != path)
+        .collect::<Vec<_>>();
+    recents.insert(
+        0,
+        RecentEntry {
+            path: path.to_string(),
+            name: name.to_string(),
+        },
+    );
+    recents.truncate(12);
+    store_recents(state, &recents)
+}
+
+#[tauri::command]
+pub fn list_recent_collections(state: State<'_, AppState>) -> ApiResult<Vec<RecentEntry>> {
+    Ok(load_recents(&state))
 }
 
 #[tauri::command]
@@ -95,7 +128,9 @@ pub fn open_collection(
     let runtime = Arc::new(CollectionRuntime::new(root));
     state.collections.insert(id.clone(), runtime.clone());
     crate::watchbridge::start(app, id.clone(), runtime.clone());
-    tree_dto(&id, &runtime)
+    let dto = tree_dto(&id, &runtime)?;
+    touch_recent_collection(&state, &id, &dto.name)?;
+    Ok(dto)
 }
 
 #[tauri::command]
@@ -123,6 +158,26 @@ pub fn close_collection(state: State<'_, AppState>, id: String) -> ApiResult<()>
 pub fn reload_collection(state: State<'_, AppState>, id: String) -> ApiResult<CollectionTreeDto> {
     let runtime = state.collection(&id)?;
     tree_dto(&id, &runtime)
+}
+
+#[tauri::command]
+pub async fn pick_save_file(
+    app: AppHandle,
+    default_name: Option<String>,
+) -> ApiResult<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let builder = match default_name {
+        Some(name) if !name.trim().is_empty() => app.dialog().file().set_file_name(name),
+        _ => app.dialog().file(),
+    };
+    builder.save_file(move |path| {
+        let _ = tx.send(path);
+    });
+    let picked = rx
+        .recv()
+        .map_err(|_| ApiError::new("dialog", "save picker closed"))?;
+    Ok(picked.map(|p| p.to_string()))
 }
 
 // ---------------------------------------------------------------------------
@@ -492,14 +547,30 @@ pub fn cancel_request(state: State<'_, AppState>, run_id: String) -> ApiResult<b
     }
 }
 
-/// Raw response bytes — never travel through JSON.
+fn response_body_preview(data: &ResponseData) -> Vec<u8> {
+    data.body.bytes.clone()
+}
+
+fn save_response_body_data(data: &ResponseData, dest: &Path) -> ApiResult<()> {
+    if let Some(spill) = &data.body.spill_path {
+        std::fs::copy(spill, dest)
+            .map(|_| ())
+            .map_err(|e| ApiError::from(tomo_core::CoreError::io(dest, e)))
+    } else {
+        std::fs::write(dest, &data.body.bytes)
+            .map_err(|e| ApiError::from(tomo_core::CoreError::io(dest, e)))
+    }
+}
+
+/// Raw response preview bytes — never travel through JSON. Large responses
+/// return only the in-memory preview; use `save_response_body` for full bodies.
 #[tauri::command]
 pub fn get_response_body(state: State<'_, AppState>, run_id: String) -> tauri::ipc::Response {
     let bytes = state
         .bodies
         .lock()
         .ok()
-        .and_then(|cache| cache.peek(&run_id).map(|d| d.body.bytes.clone()))
+        .and_then(|cache| cache.peek(&run_id).map(|d| response_body_preview(d)))
         .unwrap_or_default();
     tauri::ipc::Response::new(bytes)
 }
@@ -510,14 +581,14 @@ pub fn save_response_body(
     run_id: String,
     dest: String,
 ) -> ApiResult<()> {
-    let bytes = state
+    let data = state
         .bodies
         .lock()
         .ok()
-        .and_then(|cache| cache.peek(&run_id).map(|d| d.body.bytes.clone()))
+        .and_then(|cache| cache.peek(&run_id).cloned())
         .ok_or_else(|| ApiError::new("not_found", "response body no longer cached"))?;
     let dest = PathBuf::from(dest);
-    std::fs::write(&dest, &bytes).map_err(|e| ApiError::from(tomo_core::CoreError::io(&dest, e)))
+    save_response_body_data(&data, &dest)
 }
 
 #[tauri::command]
@@ -585,16 +656,57 @@ pub fn export_curl(
     id: String,
     rel: String,
     draft: Option<Value>,
-    _interpolated: bool,
+    interpolated: bool,
 ) -> ApiResult<String> {
+    let runtime = state.collection(&id)?;
+    let ChainFiles {
+        collection,
+        folders,
+        request: disk_request,
+    } = load_chain(&runtime.root, &rel)?;
     let request: RequestFile = match draft {
         Some(d) => from_value(d)?,
-        None => {
-            let runtime = state.collection(&id)?;
-            read_request_hashed(&runtime.root, &rel)?.0
-        }
+        None => disk_request,
     };
-    Ok(tomo_core::curl::to_curl(&request))
+    if !interpolated {
+        return Ok(tomo_core::curl::to_curl(&request));
+    }
+
+    let selected_env = runtime.selected_env.lock().ok().and_then(|g| g.clone());
+    let environment = selected_env.as_ref().and_then(|name| {
+        let path = runtime
+            .root
+            .join(ENVIRONMENTS_DIR)
+            .join(format!("{name}.toml"));
+        read_text(&path)
+            .ok()
+            .and_then(|t| parse_environment(&t, &path).ok())
+    });
+    let secrets = {
+        let path = runtime.root.join(SECRETS_FILE);
+        read_text(&path)
+            .ok()
+            .and_then(|t| parse_secrets(&t, &path).ok())
+    };
+    let dotenv = tomo_core::vars::load_dotenv(&runtime.root);
+    let runtime_vars = runtime
+        .runtime_vars
+        .lock()
+        .ok()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let folder_vars = folders.iter().map(|folder| &folder.vars).collect();
+    let stack = VarStack::build(StackInputs {
+        process_env: process_env_snapshot(),
+        dotenv,
+        collection_vars: Some(&collection.vars),
+        environment: environment.as_ref(),
+        secrets: secrets.as_ref(),
+        folder_vars,
+        request_vars: Some(&request.vars),
+        runtime_vars: Some(&runtime_vars),
+    });
+    Ok(tomo_core::curl::to_curl_interpolated(&request, &stack))
 }
 
 // ---------------------------------------------------------------------------
@@ -642,4 +754,65 @@ pub fn save_ui_state(
     let text = serde_json::to_string(&state_json).unwrap_or_default();
     atomic_write(&path, &text)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{response_body_preview, save_response_body_data};
+    use tomo_core::model::{BodyCapture, ResponseData, Timing};
+
+    fn response(bytes: Vec<u8>, total_size: u64, truncated: bool) -> ResponseData {
+        ResponseData {
+            status: 200,
+            status_text: "OK".to_string(),
+            http_version: "HTTP/1.1".to_string(),
+            headers: Vec::new(),
+            final_url: "https://api.test".to_string(),
+            timing: Timing::default(),
+            body: BodyCapture {
+                bytes,
+                total_size,
+                truncated,
+                ..Default::default()
+            },
+            warnings: Vec::new(),
+            console: Vec::new(),
+            tests: Vec::new(),
+            asserts: Vec::new(),
+            script_error: None,
+            runtime_sets: indexmap::IndexMap::new(),
+        }
+    }
+
+    #[test]
+    fn get_response_body_contract_is_preview_bytes() {
+        let data = response(b"preview".to_vec(), 13, true);
+
+        assert_eq!(response_body_preview(&data), b"preview");
+    }
+
+    #[test]
+    fn save_response_body_writes_small_body_bytes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("response.bin");
+        let data = response(b"complete".to_vec(), 8, false);
+
+        save_response_body_data(&data, &dest).unwrap();
+
+        assert_eq!(std::fs::read(dest).unwrap(), b"complete");
+    }
+
+    #[test]
+    fn save_response_body_copies_spilled_full_body() {
+        let tmp = tempfile::tempdir().unwrap();
+        let spill = tmp.path().join("spill.bin");
+        let dest = tmp.path().join("response.bin");
+        std::fs::write(&spill, b"preview-and-tail").unwrap();
+        let mut data = response(b"preview".to_vec(), 16, true);
+        data.body.spill_path = Some(spill);
+
+        save_response_body_data(&data, &dest).unwrap();
+
+        assert_eq!(std::fs::read(dest).unwrap(), b"preview-and-tail");
+    }
 }

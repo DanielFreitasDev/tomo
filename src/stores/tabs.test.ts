@@ -102,4 +102,16 @@ describe('tab lifecycle', () => {
     })
     expect(tabContent(tab())?.meta.name).toBe('Edited')
   })
+
+  it('preserves custom HTTP methods exactly as edited', async () => {
+    const id = await openRequestTab('/mock/acme-api', 'health.toml')
+    editTab(id, (d) => {
+      d.http.method = 'PROPFIND'
+      return d
+    })
+
+    const tab = useTabs.getState().byId(id)
+    if (!tab) throw new Error('tab gone')
+    expect(tabContent(tab)?.http.method).toBe('PROPFIND')
+  })
 })

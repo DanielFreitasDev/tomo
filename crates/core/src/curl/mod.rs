@@ -3,5 +3,5 @@
 mod export;
 mod import;
 
-pub use export::to_curl;
+pub use export::{to_curl, to_curl_interpolated};
 pub use import::from_curl;

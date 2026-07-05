@@ -9,14 +9,14 @@ import { Dropdown } from '@/components/ui/menu'
 import { TabStrip } from '@/features/tabs/TabStrip'
 import { useT } from '@/i18n'
 import { isTauri } from '@/lib/transport'
+import { requestCloseWindow } from '@/stores/actions/tab-actions'
 import { useUi } from '@/stores/ui'
 
-async function windowAction(action: 'minimize' | 'toggleMaximize' | 'close') {
+async function windowAction(action: 'minimize' | 'toggleMaximize') {
   const { getCurrentWindow } = await import('@tauri-apps/api/window')
   const w = getCurrentWindow()
   if (action === 'minimize') await w.minimize()
   else if (action === 'toggleMaximize') await w.toggleMaximize()
-  else await w.close()
 }
 
 export function Titlebar() {
@@ -68,7 +68,7 @@ export function Titlebar() {
             size="sm"
             noTooltip
             className="hover:bg-(--danger) hover:text-white"
-            onClick={() => void windowAction('close')}
+            onClick={() => requestCloseWindow()}
           >
             <X size={13} />
           </IconButton>

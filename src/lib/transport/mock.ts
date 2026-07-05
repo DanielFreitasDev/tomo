@@ -185,22 +185,27 @@ export function createMockTransport(): Transport {
       url,
       echo: req.body?.type === 'json' ? safeJson(req.body.content) : undefined,
     }
-    const bytes = new TextEncoder().encode(JSON.stringify(bodyObj, null, 2))
+    const bytes = url.includes('/binary')
+      ? new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0x0d, 0x0a, 0xff])
+      : new TextEncoder().encode(JSON.stringify(bodyObj, null, 2))
     return {
       status,
       status_text: status === 200 ? 'OK' : status === 404 ? 'Not Found' : 'Internal Server Error',
       http_version: 'HTTP/1.1',
       headers: [
-        ['content-type', 'application/json'],
+        ['content-type', url.includes('/binary') ? 'application/octet-stream' : 'application/json'],
         ['x-mock', 'true'],
       ],
       final_url: url,
       timing: { total_ms: 134, ttfb_ms: 90, download_ms: 44 },
       body: {
         total_size: bytes.length,
+        preview_size: bytes.length,
         truncated: false,
-        mime: 'application/json',
-        is_binary: false,
+        has_spill: false,
+        can_download_full: true,
+        mime: url.includes('/binary') ? 'application/octet-stream' : 'application/json',
+        is_binary: url.includes('/binary'),
       },
       warnings: [],
       console: [],
@@ -221,11 +226,19 @@ export function createMockTransport(): Transport {
     }
   }
 
+  const interpolateMock = (text: string, vars: Record<string, unknown>): string =>
+    text.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (match, name: string) => {
+      const value = vars[name]
+      if (value === undefined) return match
+      return typeof value === 'string' ? value : JSON.stringify(value)
+    })
+
   const settingsKey = 'tomo-mock-settings'
   const uiKey = (id?: string) => `tomo-mock-ui-${id ?? 'app'}`
 
   const handlers: { [K in keyof Commands]: (args: Commands[K]['args']) => Promise<Commands[K]['result']> } = {
     pick_collection_folder: async () => '/mock/acme-api',
+    pick_save_file: async ({ default_name }) => `/mock/downloads/${default_name ?? 'response.bin'}`,
     open_collection: async ({ path }) => {
       const c = [...collections.values()].find((c) => c.path === path) ?? fixture()
       collections.set(c.id, c)
@@ -442,10 +455,18 @@ export function createMockTransport(): Transport {
       const method = text.includes('-X POST') || text.includes('--data') ? 'POST' : 'GET'
       return makeRequest('Imported from curl', method, url)
     },
-    export_curl: async ({ id, rel, draft }) => {
-      const req = draft ?? need(id).files.get(rel)?.request
+    export_curl: async ({ id, rel, draft, interpolated }) => {
+      const c = need(id)
+      const req = draft ?? c.files.get(rel)?.request
       if (!req) throw new TransportError('not_found', rel)
-      return `curl -X ${req.http.method} '${req.http.url}'`
+      const env = c.selectedEnv ? c.environments.get(c.selectedEnv) : undefined
+      const vars = {
+        ...(env?.vars ?? {}),
+        ...(c.selectedEnv ? (c.secrets.environments[c.selectedEnv] ?? {}) : {}),
+        ...(req.vars ?? {}),
+      }
+      const url = interpolated ? interpolateMock(req.http.url, vars) : req.http.url
+      return `curl -X ${req.http.method} '${url}'`
     },
 
     get_settings: async () => {
