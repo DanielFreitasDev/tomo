@@ -16,6 +16,17 @@ pub struct ResponseData {
     pub body: BodyCapture,
     /// Interpolation warnings gathered while preparing the request.
     pub warnings: Vec<crate::vars::Warning>,
+    /// console.* output from pre-request and post-response scripts, in order.
+    pub console: Vec<crate::script::ConsoleLine>,
+    /// test() results from post-response scripts.
+    pub tests: Vec<crate::script::TestResult>,
+    /// Declarative assert results.
+    pub asserts: Vec<crate::asserts::AssertResult>,
+    /// A post-response script failure (the response itself is still shown).
+    pub script_error: Option<String>,
+    /// Runtime variables set by scripts during this run (vars.set) — the
+    /// caller persists them into the collection's runtime scope.
+    pub runtime_sets: indexmap::IndexMap<String, super::VarValue>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Default)]

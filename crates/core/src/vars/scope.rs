@@ -106,6 +106,17 @@ impl VarStack {
             .find_map(|(scope, map)| map.get(name).map(|v| (v, *scope)))
     }
 
+    /// Winning value of every visible variable, flattened for script snapshots.
+    pub fn flatten(&self) -> serde_json::Value {
+        let mut out = serde_json::Map::new();
+        for (_, map) in &self.layers {
+            for (name, value) in map {
+                out.insert(name.clone(), value.clone()); // higher layers overwrite
+            }
+        }
+        serde_json::Value::Object(out)
+    }
+
     /// All visible names with their winning scope (for UI autocomplete).
     pub fn visible(&self) -> IndexMap<String, Scope> {
         let mut out: IndexMap<String, Scope> = IndexMap::new();

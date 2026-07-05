@@ -30,6 +30,7 @@ dunce = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 time = { version = "0.3", features = ["formatting", "parsing", "macros", "serde"] }
 rand = "0.9"
+regex = "1"
 dotenvy = "0.15"
 
 # scripting

@@ -124,6 +124,11 @@ pub async fn capture(
         },
         body,
         warnings: Vec::new(),
+        console: Vec::new(),
+        tests: Vec::new(),
+        asserts: Vec::new(),
+        script_error: None,
+        runtime_sets: indexmap::IndexMap::new(),
     })
 }
 

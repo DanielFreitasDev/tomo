@@ -7,6 +7,7 @@
 pub mod dotenv;
 pub mod dynamic;
 pub mod interpolate;
+pub mod path;
 pub mod scope;
 
 pub use dotenv::{load_dotenv, process_env_snapshot};

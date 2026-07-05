@@ -16,8 +16,10 @@ use tokio_util::sync::CancellationToken;
 use crate::CoreError;
 use crate::fsops::resolve_rel;
 use crate::model::{
-    Auth, Body, EnvironmentFile, NetworkSettings, Pair, ResponseData, SecretsFile, VarValue,
+    Auth, Body, EnvironmentFile, NetworkSettings, Pair, ResponseData, Scripts, SecretsFile,
+    VarValue,
 };
+use crate::script::{HeaderEntry, Phase, ScriptHttp, ScriptRun, ScriptSource, run_scripts};
 use crate::vars::{Interpolated, StackInputs, VarStack, Warning, interpolate};
 
 use super::auth::apply_simple_auth;
@@ -60,19 +62,75 @@ pub async fn execute(cfg: &EngineConfig, spec: RunSpec<'_>) -> Result<ResponseDa
     let resolved = resolve_chain(&spec.chain);
     let request = spec.chain.request;
 
-    // ---- variable stack -------------------------------------------------
+    // ---- working copies (pre-request scripts may mutate these) -----------
+    let mut work_url = request.http.url.clone();
+    let mut work_method = request.http.method.clone();
+    let mut work_headers: Vec<Pair> = resolved.headers.clone();
+    let mut work_body = request.body.clone();
+
+    // ---- variable stack (rebuilt if pre-scripts set runtime vars) --------
     let folder_vars: Vec<&IndexMap<String, VarValue>> =
         spec.chain.folders.iter().map(|f| &f.vars).collect();
-    let stack = VarStack::build(StackInputs {
-        process_env: spec.process_env.clone(),
-        dotenv: spec.dotenv.clone(),
-        collection_vars: Some(&spec.chain.collection.vars),
-        environment: spec.environment,
-        secrets: spec.secrets,
-        folder_vars,
-        request_vars: Some(&request.vars),
-        runtime_vars: spec.runtime_vars,
-    });
+    let mut runtime_merged: IndexMap<String, VarValue> =
+        spec.runtime_vars.cloned().unwrap_or_default();
+    let build_stack = |runtime: &IndexMap<String, VarValue>| {
+        VarStack::build(StackInputs {
+            process_env: spec.process_env.clone(),
+            dotenv: spec.dotenv.clone(),
+            collection_vars: Some(&spec.chain.collection.vars),
+            environment: spec.environment,
+            secrets: spec.secrets,
+            folder_vars: folder_vars.clone(),
+            request_vars: Some(&request.vars),
+            runtime_vars: Some(runtime),
+        })
+    };
+    let mut stack = build_stack(&runtime_merged);
+
+    let mut console: Vec<crate::script::ConsoleLine> = Vec::new();
+    let mut runtime_sets_out: IndexMap<String, VarValue> = IndexMap::new();
+
+    // ---- pre-request scripts (collection → folders → request) ------------
+    let pre_sources = script_sources(&resolved.scripts_chain, &spec.chain, Phase::PreRequest);
+    if !pre_sources.is_empty() {
+        let outcome = run_scripts(ScriptRun {
+            phase: Phase::PreRequest,
+            sources: pre_sources,
+            http: ScriptHttp {
+                url: work_url.clone(),
+                method: work_method.clone(),
+                headers: header_entries(&work_headers),
+                body: body_to_script_value(work_body.as_ref()),
+            },
+            response: None,
+            vars_snapshot: stack.flatten(),
+            env_name: spec.environment.map(|e| e.meta.name.clone()),
+        })
+        .await?;
+        console.extend(outcome.console);
+        if let Some(err) = outcome.error {
+            return Err(CoreError::Invalid(format!(
+                "pre-request script error ({}): {}",
+                err.origin, err.message
+            )));
+        }
+        work_url = outcome.http.url;
+        work_method = outcome.http.method;
+        work_headers = outcome
+            .http
+            .headers
+            .into_iter()
+            .map(|h| Pair::new(h.name, h.value))
+            .collect();
+        work_body = merge_script_body(work_body, outcome.http.body);
+        if !outcome.var_sets.is_empty() {
+            for (k, v) in outcome.var_sets {
+                runtime_merged.insert(k.clone(), v.clone());
+                runtime_sets_out.insert(k, v);
+            }
+            stack = build_stack(&runtime_merged);
+        }
+    }
 
     let mut warnings: Vec<Warning> = Vec::new();
     let mut interp = |text: &str| -> String {
@@ -86,12 +144,12 @@ pub async fn execute(cfg: &EngineConfig, spec: RunSpec<'_>) -> Result<ResponseDa
     };
 
     // ---- interpolate everything -----------------------------------------
-    let url_text = interp(&request.http.url);
+    let url_text = interp(&work_url);
     let path_params = interp_pairs(&request.http.path, &mut interp);
     let query_params = interp_pairs(&request.http.query, &mut interp);
-    let mut headers: Vec<(String, String)> = resolved
-        .headers
+    let mut headers: Vec<(String, String)> = work_headers
         .iter()
+        .filter(|p| p.enabled)
         .map(|p| (interp(&p.name), interp(&p.value)))
         .collect();
     let auth = interpolate_auth(&resolved.auth, &mut interp);
@@ -138,11 +196,9 @@ pub async fn execute(cfg: &EngineConfig, spec: RunSpec<'_>) -> Result<ResponseDa
     }
 
     // ---- request builder --------------------------------------------------
-    let method = reqwest::Method::from_str(&request.http.method.to_ascii_uppercase())
-        .or_else(|_| reqwest::Method::from_bytes(request.http.method.as_bytes()))
-        .map_err(|_| {
-            CoreError::Invalid(format!("invalid HTTP method `{}`", request.http.method))
-        })?;
+    let method = reqwest::Method::from_str(&work_method.to_ascii_uppercase())
+        .or_else(|_| reqwest::Method::from_bytes(work_method.as_bytes()))
+        .map_err(|_| CoreError::Invalid(format!("invalid HTTP method `{work_method}`")))?;
 
     let mut header_map = HeaderMap::new();
     for (name, value) in &headers {
@@ -160,7 +216,7 @@ pub async fn execute(cfg: &EngineConfig, spec: RunSpec<'_>) -> Result<ResponseDa
 
     builder = attach_body(
         builder,
-        request.body.as_ref(),
+        work_body.as_ref(),
         spec.collection_root,
         &headers,
         &mut interp,
@@ -193,7 +249,187 @@ pub async fn execute(cfg: &EngineConfig, spec: RunSpec<'_>) -> Result<ResponseDa
     )
     .await?;
     data.warnings = warnings;
+
+    // parsed JSON body reused by post-scripts and asserts
+    let body_json: Option<serde_json::Value> = if !data.body.truncated
+        && data
+            .body
+            .mime
+            .as_deref()
+            .is_some_and(|m| m.contains("json"))
+    {
+        serde_json::from_slice(&data.body.bytes).ok()
+    } else {
+        None
+    };
+
+    // ---- post-response scripts --------------------------------------------
+    let post_sources = script_sources(&resolved.scripts_chain, &spec.chain, Phase::PostResponse);
+    if !post_sources.is_empty() {
+        let run = ScriptRun {
+            phase: Phase::PostResponse,
+            sources: post_sources,
+            http: ScriptHttp {
+                url: data.final_url.clone(),
+                method: work_method.clone(),
+                headers: Vec::new(),
+                body: serde_json::Value::Null,
+            },
+            response: Some(response_script_value(&data, body_json.as_ref())),
+            vars_snapshot: stack.flatten(),
+            env_name: spec.environment.map(|e| e.meta.name.clone()),
+        };
+        // a failing post script must never lose the response
+        match run_scripts(run).await {
+            Ok(outcome) => {
+                console.extend(outcome.console);
+                data.tests = outcome.tests;
+                if let Some(err) = outcome.error {
+                    data.script_error = Some(format!("({}) {}", err.origin, err.message));
+                }
+                for (k, v) in outcome.var_sets {
+                    runtime_sets_out.insert(k, v);
+                }
+            }
+            Err(e) => data.script_error = Some(e.to_string()),
+        }
+    }
+
+    data.console = console;
+    data.asserts = crate::asserts::run_asserts(&request.tests.asserts, &data, body_json.as_ref());
+    data.runtime_sets = runtime_sets_out;
     Ok(data)
+}
+
+fn script_sources(chain_scripts: &[Scripts], chain: &Chain<'_>, phase: Phase) -> Vec<ScriptSource> {
+    let mut out = Vec::new();
+    for (i, scripts) in chain_scripts.iter().enumerate() {
+        let code = match phase {
+            Phase::PreRequest => scripts.pre_request.as_deref(),
+            Phase::PostResponse => scripts.post_response.as_deref(),
+        };
+        let Some(code) = code else { continue };
+        if code.trim().is_empty() {
+            continue;
+        }
+        let origin = if i == 0 {
+            "collection".to_string()
+        } else if i == chain_scripts.len() - 1 {
+            "request".to_string()
+        } else {
+            format!(
+                "folder {}",
+                chain
+                    .folders
+                    .get(i - 1)
+                    .map(|f| f.meta.name.as_str())
+                    .unwrap_or("?")
+            )
+        };
+        out.push(ScriptSource {
+            origin,
+            code: code.to_string(),
+        });
+    }
+    out
+}
+
+fn header_entries(pairs: &[Pair]) -> Vec<HeaderEntry> {
+    pairs
+        .iter()
+        .filter(|p| p.enabled)
+        .map(|p| HeaderEntry {
+            name: p.name.clone(),
+            value: p.value.clone(),
+        })
+        .collect()
+}
+
+fn body_to_script_value(body: Option<&Body>) -> serde_json::Value {
+    match body {
+        Some(Body::Json { content }) => serde_json::from_str(content)
+            .unwrap_or_else(|_| serde_json::Value::String(content.clone())),
+        Some(Body::Text { content }) | Some(Body::Xml { content }) => {
+            serde_json::Value::String(content.clone())
+        }
+        Some(Body::Graphql { query, variables }) => {
+            serde_json::json!({ "query": query, "variables": variables })
+        }
+        _ => serde_json::Value::Null,
+    }
+}
+
+fn merge_script_body(original: Option<Body>, new_value: serde_json::Value) -> Option<Body> {
+    let original = original?;
+    Some(match original {
+        Body::Json { .. } => Body::Json {
+            content: match new_value {
+                serde_json::Value::String(s) => s,
+                other => serde_json::to_string_pretty(&other).unwrap_or_default(),
+            },
+        },
+        Body::Text { .. } => Body::Text {
+            content: script_value_to_text(new_value),
+        },
+        Body::Xml { .. } => Body::Xml {
+            content: script_value_to_text(new_value),
+        },
+        Body::Graphql { query, variables } => match new_value {
+            serde_json::Value::Object(map) => Body::Graphql {
+                query: map
+                    .get("query")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                    .unwrap_or(query),
+                variables: map
+                    .get("variables")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                    .or(variables),
+            },
+            _ => Body::Graphql { query, variables },
+        },
+        other => other,
+    })
+}
+
+fn script_value_to_text(v: serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s,
+        other => other.to_string(),
+    }
+}
+
+fn response_script_value(
+    data: &ResponseData,
+    body_json: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    let mut headers = serde_json::Map::new();
+    for (k, v) in &data.headers {
+        let key = k.to_ascii_lowercase();
+        match headers.get_mut(&key) {
+            Some(serde_json::Value::String(existing)) => {
+                existing.push_str(", ");
+                existing.push_str(v);
+            }
+            _ => {
+                headers.insert(key, serde_json::Value::String(v.clone()));
+            }
+        }
+    }
+    let body = match body_json {
+        Some(v) => v.clone(),
+        None if data.body.is_binary => serde_json::Value::Null,
+        None => serde_json::Value::String(data.body.preview_text()),
+    };
+    serde_json::json!({
+        "status": data.status,
+        "statusText": data.status_text,
+        "headers": headers,
+        "body": body,
+        "responseTime": data.timing.total_ms,
+        "size": data.body.total_size,
+    })
 }
 
 fn interp_pairs(pairs: &[Pair], interp: &mut impl FnMut(&str) -> String) -> Vec<Pair> {
