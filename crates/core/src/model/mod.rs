@@ -8,6 +8,7 @@ pub mod body;
 pub mod collection;
 pub mod environment;
 pub mod request;
+pub mod response;
 pub mod settings;
 
 pub use auth::{ApiKeyPlacement, Auth, ClientAuth, OAuth2Config, OAuth2Grant};
@@ -19,6 +20,7 @@ pub use environment::{EnvMeta, EnvironmentFile, SecretsFile};
 pub use request::{
     Assert, AssertOp, Docs, HttpDef, Pair, RequestFile, RequestMeta, RequestOptions, Scripts, Tests,
 };
+pub use response::{BodyCapture, ResponseData, Timing};
 pub use settings::{NetworkSettings, ProxyMode, ProxySettings, Settings, Theme};
 
 /// Variable values are JSON-shaped: strings, numbers, booleans, arrays, objects.

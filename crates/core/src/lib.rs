@@ -7,6 +7,7 @@
 pub mod error;
 pub mod format;
 pub mod fsops;
+pub mod http;
 pub mod model;
 pub mod vars;
 

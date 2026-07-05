@@ -20,6 +20,15 @@ pub enum CoreError {
 
     #[error("{0}")]
     Invalid(String),
+
+    #[error("request failed: {message}")]
+    Http { message: String },
+
+    #[error("request timed out after {ms} ms")]
+    Timeout { ms: u64 },
+
+    #[error("request cancelled")]
+    Cancelled,
 }
 
 impl CoreError {
@@ -28,5 +37,24 @@ impl CoreError {
             path: path.into(),
             source,
         }
+    }
+
+    /// Map a reqwest error to a user-facing CoreError.
+    pub fn from_reqwest(e: reqwest::Error, timeout_ms: u64) -> Self {
+        if e.is_timeout() {
+            return Self::Timeout { ms: timeout_ms };
+        }
+        // unwrap the source chain for a more useful message than reqwest's
+        // "error sending request" wrapper
+        let mut message = e.to_string();
+        let mut source: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(&e);
+        while let Some(inner) = source {
+            message = inner.to_string();
+            source = std::error::Error::source(inner);
+        }
+        if e.is_redirect() {
+            message = format!("redirect policy: {message}");
+        }
+        Self::Http { message }
     }
 }
