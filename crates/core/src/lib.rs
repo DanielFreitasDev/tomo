@@ -8,6 +8,7 @@ pub mod error;
 pub mod format;
 pub mod fsops;
 pub mod model;
+pub mod vars;
 
 pub use error::CoreError;
 
