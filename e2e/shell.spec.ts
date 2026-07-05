@@ -75,7 +75,9 @@ test('tabs: preview replacement, promotion, dirty dot, close and reopen', async 
   await expect(page.getByRole('tab', { name: /Health check/ })).toBeHidden()
 
   // edit -> dirty dot appears and the preview is promoted
+  // (the URL bar is a CodeMirror editor: fill its contenteditable content)
   const url = page.getByLabel('Request URL')
+  await url.click()
   await url.fill('https://httpbin.org/anything/users?edited=1')
   await expect(page.getByRole('tab', { name: /List users/ }).getByLabel('unsaved')).toBeVisible()
 
