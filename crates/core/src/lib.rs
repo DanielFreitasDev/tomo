@@ -5,6 +5,7 @@
 //! `http`, `script`, `asserts`, `curl`, `history`.
 
 pub mod asserts;
+pub mod curl;
 pub mod error;
 pub mod format;
 pub mod fsops;
