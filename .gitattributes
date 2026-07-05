@@ -1,0 +1,9 @@
+# Force LF in the working tree on every platform so exact-string tests
+# (TOML round-trips, insta snapshots) are deterministic on Windows CI.
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
+*.icns binary
+*.woff2 binary
+*.ttf binary
