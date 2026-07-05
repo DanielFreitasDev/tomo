@@ -1,0 +1,74 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "src-tauri"]
+# src-tauri needs system webkit2gtk to compile; keep default builds green without it.
+default-members = ["crates/core"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Daniel Freitas <danielsfreitas97@gmail.com>"]
+rust-version = "1.85"
+
+[workspace.dependencies]
+tomo-core = { path = "crates/core" }
+
+# model / format
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+indexmap = { version = "2", features = ["serde"] }
+toml_edit = { version = "0.25", features = ["serde"] }
+thiserror = "2"
+
+# fs / ids / hashing
+blake3 = "1"
+tempfile = "3"
+walkdir = "2"
+dunce = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+time = { version = "0.3", features = ["formatting", "parsing", "macros", "serde"] }
+rand = "0.9"
+dotenvy = "0.15"
+
+# scripting
+boa_engine = "0.21"
+
+# async / http (used from M5 on)
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "time", "sync"] }
+tokio-util = { version = "0.7", features = ["io"] }
+reqwest = { version = "0.13", default-features = false, features = [
+  "rustls-tls",
+  "cookies",
+  "multipart",
+  "stream",
+  "gzip",
+  "brotli",
+  "zstd",
+  "deflate",
+  "socks",
+  "json",
+  "system-proxy",
+] }
+encoding_rs = "0.8"
+mime = "0.3"
+diqwest = "3"
+digest_auth = "0.3"
+lru = "0.18"
+dashmap = "6"
+shell-words = "1"
+
+# watching
+notify = "8"
+notify-debouncer-full = "0.7"
+
+# dev
+insta = "1"
+pretty_assertions = "1"
+wiremock = "0.6"
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true
+panic = "abort"

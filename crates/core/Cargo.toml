@@ -1,0 +1,28 @@
+[package]
+name = "tomo-core"
+description = "Pure core logic for the Tomo API client: TOML format, variables, HTTP engine, scripting"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+indexmap = { workspace = true }
+toml_edit = { workspace = true }
+thiserror = { workspace = true }
+blake3 = { workspace = true }
+tempfile = { workspace = true }
+walkdir = { workspace = true }
+dunce = { workspace = true }
+uuid = { workspace = true }
+time = { workspace = true }
+rand = { workspace = true }
+dotenvy = { workspace = true }
+boa_engine = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+pretty_assertions = { workspace = true }
