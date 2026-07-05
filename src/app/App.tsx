@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { ToastViewport } from '@/components/ui/toast'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { bootTransportListeners } from '@/stores/actions/fs-actions'
+import { isTauri } from '@/lib/transport'
+import { bootTransportListeners, openCollection } from '@/stores/actions/fs-actions'
 import { useSettings, watchSystemTheme } from '@/stores/settings'
 import { useUi } from '@/stores/ui'
 import { Gallery } from './Gallery'
@@ -26,6 +27,8 @@ export function App() {
     void useUi.getState().hydrate()
     const unlisten = bootTransportListeners()
     const unwatch = watchSystemTheme()
+    // browser dev/e2e: the mock workspace opens automatically
+    if (!isTauri()) void openCollection('/mock/acme-api')
     return () => {
       unlisten()
       unwatch()
