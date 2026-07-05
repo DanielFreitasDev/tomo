@@ -1,0 +1,66 @@
+---
+source: crates/core/tests/format_roundtrip.rs
+expression: text
+---
+[meta]
+name = "Create user"
+seq = 3
+
+[http]
+method = "POST"
+url = "{{base_url}}/api/v2/users/:id/posts"
+headers = [
+  { name = "Content-Type", value = "application/json" },
+  { name = "X-Request-Id", value = "{{$uuid}}" },
+  { name = "X-Debug", value = "1", enabled = false },
+]
+query = [
+  { name = "notify", value = "true" },
+  { name = "verbose", value = "1", enabled = false },
+]
+path = [
+  { name = "id", value = "{{user_id}}" },
+]
+
+[auth]
+type = "bearer"
+token = "{{access_token}}"
+
+[body]
+type = "json"
+content = '''
+{
+  "name": "Ada Lovelace",
+  "tags": ["math", "computing"]
+}
+'''
+
+[vars]
+user_id = "42"
+retries = 3
+strict = true
+
+[scripts]
+pre_request = '''
+vars.set("nonce", "n-1");
+'''
+post_response = '''
+test("created", () => { expect(res.status).toBe(201); });
+'''
+
+[tests]
+asserts = [
+  { expr = "res.status", op = "eq", value = 201 },
+  { expr = "res.body.id", op = "isDefined" },
+  { expr = "res.headers.content-type", op = "matches", value = "^application/json", enabled = false },
+]
+
+[options]
+timeout_ms = 10000
+follow_redirects = false
+
+[docs]
+content = '''
+# Create user
+Creates a user and returns `201`.
+'''

@@ -1,0 +1,11 @@
+---
+source: crates/core/tests/format_roundtrip.rs
+expression: text
+---
+[meta]
+name = "Development"
+secrets = ["api_key", "oauth_client_secret"]
+
+[vars]
+base_url = "https://dev.acme.test"
+retries = 2

@@ -1,0 +1,29 @@
+---
+source: crates/core/tests/format_roundtrip.rs
+expression: text
+---
+[meta]
+name = "Acme API"
+format = 1
+
+[defaults]
+headers = [
+  { name = "User-Agent", value = "tomo/0.1" },
+]
+
+[auth]
+type = "bearer"
+token = "{{access_token}}"
+
+[vars]
+base_url = "https://api.acme.test"
+
+[scripts]
+pre_request = '''
+// collection pre
+'''
+
+[[tls.client_certs]]
+host = "mtls.acme.test"
+cert = "certs/client.pem"
+key = "certs/client-key.pem"
