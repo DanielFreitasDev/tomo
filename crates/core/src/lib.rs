@@ -12,6 +12,7 @@ pub mod http;
 pub mod model;
 pub mod script;
 pub mod vars;
+pub mod watch;
 
 pub use error::CoreError;
 
