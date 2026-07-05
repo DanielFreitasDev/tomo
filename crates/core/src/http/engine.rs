@@ -25,6 +25,8 @@ use super::build::build_url;
 use super::capture::{CaptureConfig, capture};
 use super::client::{ClientOptions, build_client};
 use super::cookies::TomoJar;
+use super::digest::send_with_digest;
+use super::oauth2::{TokenCache, get_token};
 use super::resolve::{Chain, resolve_chain};
 
 pub struct EngineConfig {
@@ -41,6 +43,7 @@ pub struct RunSpec<'a> {
     pub dotenv: IndexMap<String, String>,
     pub collection_root: &'a Path,
     pub jar: Arc<TomoJar>,
+    pub token_cache: Arc<TokenCache>,
     pub cancel: CancellationToken,
 }
 
@@ -121,6 +124,19 @@ pub async fn execute(cfg: &EngineConfig, spec: RunSpec<'_>) -> Result<ResponseDa
         spec.jar.clone(),
     )?;
 
+    // ---- OAuth2 (network round-trip, cached) ------------------------------
+    if let Auth::Oauth2(oauth_cfg) = &auth {
+        let token = get_token(
+            &client,
+            oauth_cfg,
+            &spec.token_cache,
+            &spec.cancel,
+            opts.timeout_ms,
+        )
+        .await?;
+        headers.push(("Authorization".into(), format!("Bearer {token}")));
+    }
+
     // ---- request builder --------------------------------------------------
     let method = reqwest::Method::from_str(&request.http.method.to_ascii_uppercase())
         .or_else(|_| reqwest::Method::from_bytes(request.http.method.as_bytes()))
@@ -151,12 +167,17 @@ pub async fn execute(cfg: &EngineConfig, spec: RunSpec<'_>) -> Result<ResponseDa
     )
     .await?;
 
-    // ---- send (cancellable) ------------------------------------------------
+    // ---- send (cancellable; digest does a 401-challenge round-trip) --------
     let started = Instant::now();
-    let response = tokio::select! {
-        biased;
-        _ = spec.cancel.cancelled() => return Err(CoreError::Cancelled),
-        r = builder.send() => r.map_err(|e| CoreError::from_reqwest(e, opts.timeout_ms))?,
+    let response = match &auth {
+        Auth::Digest { username, password } => {
+            send_with_digest(builder, username, password, &spec.cancel, opts.timeout_ms).await?
+        }
+        _ => tokio::select! {
+            biased;
+            _ = spec.cancel.cancelled() => return Err(CoreError::Cancelled),
+            r = builder.send() => r.map_err(|e| CoreError::from_reqwest(e, opts.timeout_ms))?,
+        },
     };
 
     let capture_cfg = CaptureConfig {

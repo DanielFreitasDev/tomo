@@ -7,7 +7,7 @@ use indexmap::IndexMap;
 use pretty_assertions::assert_eq;
 use tokio_util::sync::CancellationToken;
 use tomo_core::CoreError;
-use tomo_core::http::{Chain, EngineConfig, RunSpec, TomoJar, execute};
+use tomo_core::http::{Chain, EngineConfig, RunSpec, TokenCache, TomoJar, execute};
 use tomo_core::model::*;
 use wiremock::matchers::{body_string_contains, header, method, path, query_param};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
@@ -71,6 +71,7 @@ impl Ctx {
                 dotenv: IndexMap::new(),
                 collection_root: self.tmp.path(),
                 jar,
+                token_cache: TokenCache::new(),
                 cancel,
             },
         )
