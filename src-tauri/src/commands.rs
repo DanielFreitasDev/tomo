@@ -61,7 +61,7 @@ pub async fn pick_collection_folder(app: AppHandle) -> ApiResult<Option<String>>
     Ok(picked.map(|p| p.to_string()))
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct RecentEntry {
     pub path: String,
     pub name: String,

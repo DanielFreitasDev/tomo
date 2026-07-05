@@ -2,7 +2,6 @@
 //! in-flight request registry for cancellation, and a small LRU of response
 //! bodies awaiting `get_response_body`.
 
-use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
