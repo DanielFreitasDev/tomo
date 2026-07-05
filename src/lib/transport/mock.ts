@@ -460,8 +460,8 @@ export function createMockTransport(): Transport {
       const raw = localStorage.getItem(uiKey(id))
       return raw ? JSON.parse(raw) : null
     },
-    save_ui_state: async ({ id, state }) => {
-      localStorage.setItem(uiKey(id), JSON.stringify(state))
+    save_ui_state: async ({ id, state_json }) => {
+      localStorage.setItem(uiKey(id), JSON.stringify(state_json))
       return null
     },
   }

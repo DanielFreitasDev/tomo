@@ -67,9 +67,8 @@ impl AppState {
     }
 
     pub fn collection(&self, id: &str) -> Result<Arc<CollectionRuntime>, crate::error::ApiError> {
-        self.collections
-            .get(id)
-            .map(|r| r.clone())
-            .ok_or_else(|| crate::error::ApiError::new("not_found", format!("collection not open: {id}")))
+        self.collections.get(id).map(|r| r.clone()).ok_or_else(|| {
+            crate::error::ApiError::new("not_found", format!("collection not open: {id}"))
+        })
     }
 }

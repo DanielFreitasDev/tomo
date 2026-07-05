@@ -274,7 +274,7 @@ export interface Commands {
   get_settings: { args: Record<string, never>; result: SettingsDto }
   save_settings: { args: { settings: SettingsDto }; result: null }
   get_ui_state: { args: { id?: string }; result: unknown }
-  save_ui_state: { args: { id?: string; state: unknown }; result: null }
+  save_ui_state: { args: { id?: string; state_json: unknown }; result: null }
 }
 
 export interface Events {

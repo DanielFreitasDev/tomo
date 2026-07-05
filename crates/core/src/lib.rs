@@ -7,6 +7,7 @@
 pub mod asserts;
 pub mod curl;
 pub mod error;
+pub mod facade;
 pub mod format;
 pub mod fsops;
 pub mod http;

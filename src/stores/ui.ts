@@ -38,7 +38,7 @@ function persist(get: () => UiState) {
   persistTimer = setTimeout(() => {
     const { sidebarWidth, sidebarCollapsed, expanded, splitOrientation } = get()
     const state: PersistedUi = { sidebarWidth, sidebarCollapsed, expanded, splitOrientation }
-    void transport().invoke('save_ui_state', { state })
+    void transport().invoke('save_ui_state', { state_json: state })
   }, 500)
 }
 
