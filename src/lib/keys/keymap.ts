@@ -5,6 +5,8 @@
  * with Prec.high keymaps later (M11).
  */
 
+import { useUi } from '@/stores/ui'
+
 export interface ShortcutDef {
   id: string
   /** e.g. "mod+enter", "mod+shift+t", "f2" — mod = Ctrl (⌘ on mac later) */
@@ -46,6 +48,10 @@ export function installKeyboardListener(): () => void {
   if (installed) return () => {}
   installed = true
   const onKeyDown = (e: KeyboardEvent) => {
+    // A modal or the command palette owns the keyboard while open; global
+    // shortcuts stay inert so e.g. Ctrl+W can't close a background tab.
+    const ui = useUi.getState()
+    if (ui.modal !== null || ui.paletteOpen) return
     const combo = comboOf(e)
     for (const def of registry.values()) {
       if (def.combo !== combo) continue

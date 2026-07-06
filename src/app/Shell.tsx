@@ -84,13 +84,13 @@ export function Shell() {
       })),
       {
         id: 'next-tab',
-        combo: 'ctrl+tab',
+        combo: 'mod+tab',
         inInputs: true,
         run: () => cycleTab(1),
       },
       {
         id: 'prev-tab',
-        combo: 'ctrl+shift+tab',
+        combo: 'mod+shift+tab',
         inInputs: true,
         run: () => cycleTab(-1),
       },
@@ -119,7 +119,9 @@ export function Shell() {
               {activeTab ? (
                 <Group orientation={splitOrientation} className="h-full">
                   <Panel defaultSize="55%" minSize="25%" id="request">
-                    <RequestPane tab={activeTab} />
+                    {/* key by tab id: each request gets its own editor instances
+                        (and undo history), so Ctrl+Z can't bleed across tabs. */}
+                    <RequestPane key={activeTab.id} tab={activeTab} />
                   </Panel>
                   <Separator
                     className={

@@ -28,7 +28,10 @@ export async function sendActiveRequest(tabId: string): Promise<void> {
       draft: tab.draft ?? tabContent(tab),
       env: info?.selectedEnv,
     })
-    const bytes = await transport().invoke('get_response_body', { run_id: runId })
+    // Tauri's ipc::Response resolves as an ArrayBuffer; the mock yields a
+    // Uint8Array. Normalize so downstream consumers always get a Uint8Array.
+    const raw: unknown = await transport().invoke('get_response_body', { run_id: runId })
+    const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw as ArrayBuffer)
     // ignore if a newer run replaced this one
     if (useResponses.getState().of(tabId).runId === runId) {
       useResponses.getState().complete(tabId, meta, bytes)

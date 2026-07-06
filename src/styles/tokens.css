@@ -22,7 +22,7 @@
   /* ---------- text ---------- */
   --text-primary: #18181c;
   --text-secondary: #52525b;
-  --text-muted: #8e8e98;
+  --text-muted: #696971; /* AA: 4.5:1+ on app/surface */
   --text-disabled: #b8b8c0;
   --text-inverse: #ffffff;
 
@@ -99,7 +99,7 @@
 
   --text-primary: #ececee;
   --text-secondary: #a6a6af;
-  --text-muted: #74747e;
+  --text-muted: #8e8e98; /* AA: 4.5:1+ on dark surfaces */
   --text-disabled: #4e4e56;
   --text-inverse: #18181c;
 
