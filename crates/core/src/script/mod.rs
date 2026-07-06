@@ -1,8 +1,8 @@
-//! JS scripting (pre-request / post-response) on boa_engine.
+//! JS scripting (pre-request / post-response) on rquickjs (QuickJS).
 
 pub mod engine;
 
 pub use engine::{
-    ConsoleLine, HeaderEntry, Phase, ScriptError, ScriptHttp, ScriptOutcome, ScriptRun,
-    ScriptSource, TestResult, run_scripts,
+    ConsoleLine, HeaderEntry, Phase, QuickJsEngine, ScriptEngine, ScriptError, ScriptHttp,
+    ScriptOutcome, ScriptRun, ScriptSource, TestResult, run_scripts,
 };

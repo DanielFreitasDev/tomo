@@ -34,7 +34,7 @@ regex = "1"
 dotenvy = "0.15"
 
 # scripting
-boa_engine = "0.21"
+rquickjs = { version = "0.11", features = ["std"] }
 
 # async / http (used from M5 on)
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "time", "sync"] }

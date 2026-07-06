@@ -23,7 +23,7 @@ time = { workspace = true }
 rand = { workspace = true }
 regex = { workspace = true }
 dotenvy = { workspace = true }
-boa_engine = { workspace = true }
+rquickjs = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 reqwest = { workspace = true }

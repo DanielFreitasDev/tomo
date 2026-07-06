@@ -218,19 +218,10 @@ async fn post_script_error_keeps_the_response() {
     assert!(err.contains("request"), "{err}");
 }
 
-#[tokio::test]
-async fn loop_bombs_terminate_via_runtime_limits() {
-    let mut req = request_to("http://localhost:1/never".into());
-    req.scripts.pre_request = Some("while (true) {}".into());
-
-    let started = std::time::Instant::now();
-    let err = Ctx::new().run(&req).await.unwrap_err();
-    assert!(
-        started.elapsed() < std::time::Duration::from_secs(9),
-        "must not hang"
-    );
-    assert!(err.to_string().to_lowercase().contains("loop"), "{err}");
-}
+// Hostile-script termination (loop/recursion/memory bombs + partial-console on
+// timeout) is owned by the engine-level tests in `script::engine` — they drive
+// `QuickJsEngine` directly with a 400ms deadline, so they are both faster and
+// more thorough than a full-pipeline bomb that would burn the whole 10s timeout.
 
 #[tokio::test]
 async fn declarative_asserts_evaluate_against_response() {
