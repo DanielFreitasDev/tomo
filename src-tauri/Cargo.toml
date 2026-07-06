@@ -33,3 +33,6 @@ blake3 = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# `test` enables tauri::test (MockRuntime) for the IPC integration tests. As a
+# dev-dependency it is active only under `cargo test`, never in the release build.
+tauri = { version = "2", features = ["test"] }

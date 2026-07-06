@@ -23,6 +23,8 @@ pub fn run() {
                 .path()
                 .app_cache_dir()
                 .unwrap_or_else(|_| std::env::temp_dir().join("tomo-cache"));
+            // Clear orphaned response spill files left by a previous run.
+            let _ = std::fs::remove_dir_all(cache_dir.join("bodies"));
             app.manage(AppState::new(config_dir, cache_dir));
             Ok(())
         })

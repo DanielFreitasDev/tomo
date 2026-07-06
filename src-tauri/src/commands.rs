@@ -44,11 +44,30 @@ fn tree_dto(id: &str, runtime: &CollectionRuntime) -> ApiResult<CollectionTreeDt
     Ok(CollectionTreeDto::build(id, &tree, envs, selected))
 }
 
+/// Resolve an environment file path from a user-supplied name, guarding against
+/// path traversal — the name is a bare file stem, never a rel path. Unlike
+/// `rel` (guarded by `resolve_rel`), env names reach the fs join directly.
+fn env_file_path(root: &Path, name: &str) -> ApiResult<PathBuf> {
+    let bad = name.is_empty()
+        || name == "."
+        || name == ".."
+        || name
+            .chars()
+            .any(|c| matches!(c, '/' | '\\' | ':' | '\0') || c.is_control());
+    if bad {
+        return Err(ApiError::new(
+            "invalid",
+            format!("invalid environment name: {name}"),
+        ));
+    }
+    Ok(root.join(ENVIRONMENTS_DIR).join(format!("{name}.toml")))
+}
+
 // ---------------------------------------------------------------------------
 // collections
 // ---------------------------------------------------------------------------
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn pick_collection_folder(app: AppHandle) -> ApiResult<Option<String>> {
     use tauri_plugin_dialog::DialogExt;
     let (tx, rx) = std::sync::mpsc::channel();
@@ -104,12 +123,12 @@ fn touch_recent_collection(state: &AppState, path: &str, name: &str) -> ApiResul
     store_recents(state, &recents)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn list_recent_collections(state: State<'_, AppState>) -> ApiResult<Vec<RecentEntry>> {
     Ok(load_recents(&state))
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn open_collection(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -133,7 +152,7 @@ pub fn open_collection(
     Ok(dto)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn create_collection(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -148,19 +167,19 @@ pub fn create_collection(
     open_collection(app, state, id)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn close_collection(state: State<'_, AppState>, id: String) -> ApiResult<()> {
     state.collections.remove(&id);
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn reload_collection(state: State<'_, AppState>, id: String) -> ApiResult<CollectionTreeDto> {
     let runtime = state.collection(&id)?;
     tree_dto(&id, &runtime)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn pick_save_file(
     app: AppHandle,
     default_name: Option<String>,
@@ -190,7 +209,7 @@ fn register_write(runtime: &CollectionRuntime, rel: &str, text: &str) {
     }
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn create_folder(
     state: State<'_, AppState>,
     id: String,
@@ -201,7 +220,7 @@ pub fn create_folder(
     Ok(fsops::create_folder(&runtime.root, &parent_rel, &name)?)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn create_request(
     state: State<'_, AppState>,
     id: String,
@@ -212,7 +231,7 @@ pub fn create_request(
     Ok(fsops::create_request(&runtime.root, &parent_rel, &name)?)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn read_request(
     state: State<'_, AppState>,
     id: String,
@@ -226,7 +245,7 @@ pub fn read_request(
     })
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn save_request(
     state: State<'_, AppState>,
     id: String,
@@ -264,7 +283,7 @@ pub fn save_request(
     })
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn rename_node(
     state: State<'_, AppState>,
     id: String,
@@ -280,7 +299,7 @@ pub fn rename_node(
     })
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn move_node(
     state: State<'_, AppState>,
     id: String,
@@ -291,19 +310,19 @@ pub fn move_node(
     Ok(fsops::move_node(&runtime.root, &rel, &new_parent_rel)?)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn duplicate_request(state: State<'_, AppState>, id: String, rel: String) -> ApiResult<String> {
     let runtime = state.collection(&id)?;
     Ok(fsops::duplicate_request(&runtime.root, &rel)?)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn delete_node(state: State<'_, AppState>, id: String, rel: String) -> ApiResult<()> {
     let runtime = state.collection(&id)?;
     Ok(fsops::delete_node(&runtime.root, &rel)?)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn reorder_nodes(
     state: State<'_, AppState>,
     id: String,
@@ -317,18 +336,15 @@ pub fn reorder_nodes(
 // environments & secrets
 // ---------------------------------------------------------------------------
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn read_environment(state: State<'_, AppState>, id: String, name: String) -> ApiResult<Value> {
     let runtime = state.collection(&id)?;
-    let path = runtime
-        .root
-        .join(ENVIRONMENTS_DIR)
-        .join(format!("{name}.toml"));
+    let path = env_file_path(&runtime.root, &name)?;
     let env = parse_environment(&read_text(&path)?, &path)?;
     Ok(to_value(&env))
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn save_environment(
     state: State<'_, AppState>,
     id: String,
@@ -338,8 +354,7 @@ pub fn save_environment(
 ) -> ApiResult<()> {
     let runtime = state.collection(&id)?;
     let env: EnvironmentFile = from_value(env)?;
-    let dir = runtime.root.join(ENVIRONMENTS_DIR);
-    let path = dir.join(format!("{name}.toml"));
+    let path = env_file_path(&runtime.root, &name)?;
 
     let text = match read_text(&path) {
         Ok(existing) => sync_environment(&existing, &env, &path)?,
@@ -349,22 +364,20 @@ pub fn save_environment(
     if let Some(prev) = previous_name
         && prev != name
     {
-        let _ = std::fs::remove_file(dir.join(format!("{prev}.toml")));
+        let prev_path = env_file_path(&runtime.root, &prev)?;
+        let _ = std::fs::remove_file(prev_path);
     }
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn delete_environment(state: State<'_, AppState>, id: String, name: String) -> ApiResult<()> {
     let runtime = state.collection(&id)?;
-    let path = runtime
-        .root
-        .join(ENVIRONMENTS_DIR)
-        .join(format!("{name}.toml"));
+    let path = env_file_path(&runtime.root, &name)?;
     std::fs::remove_file(&path).map_err(|e| ApiError::from(tomo_core::CoreError::io(&path, e)))
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn select_environment(
     state: State<'_, AppState>,
     id: String,
@@ -377,7 +390,7 @@ pub fn select_environment(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn read_secrets(state: State<'_, AppState>, id: String) -> ApiResult<Value> {
     let runtime = state.collection(&id)?;
     let path = runtime.root.join(SECRETS_FILE);
@@ -388,7 +401,7 @@ pub fn read_secrets(state: State<'_, AppState>, id: String) -> ApiResult<Value> 
     Ok(to_value(&secrets))
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn save_secrets(state: State<'_, AppState>, id: String, secrets: Value) -> ApiResult<()> {
     let runtime = state.collection(&id)?;
     let secrets: SecretsFile = from_value(secrets)?;
@@ -408,7 +421,7 @@ struct StartedPayload {
     run_id: String,
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn send_request(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -433,15 +446,11 @@ pub async fn send_request(
 
     // environment + secrets + dotenv snapshots
     let environment = match &env {
-        Some(name) => {
-            let path = runtime
-                .root
-                .join(ENVIRONMENTS_DIR)
-                .join(format!("{name}.toml"));
+        Some(name) => env_file_path(&runtime.root, name).ok().and_then(|path| {
             read_text(&path)
                 .ok()
                 .and_then(|t| parse_environment(&t, &path).ok())
-        }
+        }),
         None => None,
     };
     let secrets = {
@@ -514,7 +523,15 @@ pub async fn send_request(
             let meta = ResponseMetaDto::from_data(&data, cookies);
             // park the full body (incl. bytes) for get_response_body
             if let Ok(mut cache) = state.bodies.lock() {
-                cache.put(run_id.clone(), Arc::new(data));
+                // push returns the evicted entry (LRU capacity or same key);
+                // delete its spill file so full bodies don't accumulate on disk.
+                // Skip if another reader still holds it (a concurrent download).
+                if let Some((_, evicted)) = cache.push(run_id.clone(), Arc::new(data))
+                    && Arc::strong_count(&evicted) == 1
+                    && let Some(path) = &evicted.body.spill_path
+                {
+                    let _ = std::fs::remove_file(path);
+                }
             }
             let _ = app.emit(
                 "request:completed",
@@ -537,7 +554,7 @@ pub async fn send_request(
     }
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn cancel_request(state: State<'_, AppState>, run_id: String) -> ApiResult<bool> {
     if let Some((_, handle)) = state.runs.remove(&run_id) {
         handle.token.cancel();
@@ -564,7 +581,7 @@ fn save_response_body_data(data: &ResponseData, dest: &Path) -> ApiResult<()> {
 
 /// Raw response preview bytes — never travel through JSON. Large responses
 /// return only the in-memory preview; use `save_response_body` for full bodies.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn get_response_body(state: State<'_, AppState>, run_id: String) -> tauri::ipc::Response {
     let bytes = state
         .bodies
@@ -575,7 +592,7 @@ pub fn get_response_body(state: State<'_, AppState>, run_id: String) -> tauri::i
     tauri::ipc::Response::new(bytes)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn save_response_body(
     state: State<'_, AppState>,
     run_id: String,
@@ -591,13 +608,13 @@ pub fn save_response_body(
     save_response_body_data(&data, &dest)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn get_cookies(state: State<'_, AppState>, id: String) -> ApiResult<Value> {
     let runtime = state.collection(&id)?;
     Ok(to_value(&runtime.jar.list()))
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn clear_cookies(
     state: State<'_, AppState>,
     id: String,
@@ -608,7 +625,7 @@ pub fn clear_cookies(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn get_runtime_vars(state: State<'_, AppState>, id: String) -> ApiResult<Value> {
     let runtime = state.collection(&id)?;
     Ok(runtime
@@ -618,7 +635,7 @@ pub fn get_runtime_vars(state: State<'_, AppState>, id: String) -> ApiResult<Val
         .unwrap_or(Value::Null))
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn set_runtime_var(
     state: State<'_, AppState>,
     id: String,
@@ -632,7 +649,7 @@ pub fn set_runtime_var(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn clear_runtime_vars(state: State<'_, AppState>, id: String) -> ApiResult<()> {
     let runtime = state.collection(&id)?;
     if let Ok(mut vars) = runtime.runtime_vars.lock() {
@@ -645,12 +662,12 @@ pub fn clear_runtime_vars(state: State<'_, AppState>, id: String) -> ApiResult<(
 // curl
 // ---------------------------------------------------------------------------
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn import_curl(text: String) -> ApiResult<Value> {
     Ok(to_value(&tomo_core::curl::from_curl(&text)?))
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn export_curl(
     state: State<'_, AppState>,
     id: String,
@@ -674,10 +691,7 @@ pub fn export_curl(
 
     let selected_env = runtime.selected_env.lock().ok().and_then(|g| g.clone());
     let environment = selected_env.as_ref().and_then(|name| {
-        let path = runtime
-            .root
-            .join(ENVIRONMENTS_DIR)
-            .join(format!("{name}.toml"));
+        let path = env_file_path(&runtime.root, name).ok()?;
         read_text(&path)
             .ok()
             .and_then(|t| parse_environment(&t, &path).ok())
@@ -713,12 +727,12 @@ pub fn export_curl(
 // settings & ui state
 // ---------------------------------------------------------------------------
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn get_settings(state: State<'_, AppState>) -> ApiResult<Value> {
     Ok(to_value(&load_settings(&state.config_dir)))
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn save_settings(state: State<'_, AppState>, settings: Value) -> ApiResult<()> {
     let settings: Settings = from_value(settings)?;
     facade_save_settings(&state.config_dir, &settings)?;
@@ -733,7 +747,7 @@ fn ui_state_path(state: &AppState, id: &Option<String>) -> PathBuf {
     state.config_dir.join(name)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn get_ui_state(state: State<'_, AppState>, id: Option<String>) -> ApiResult<Value> {
     let path = ui_state_path(&state, &id);
     Ok(std::fs::read_to_string(&path)
@@ -742,7 +756,7 @@ pub fn get_ui_state(state: State<'_, AppState>, id: Option<String>) -> ApiResult
         .unwrap_or(Value::Null))
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn save_ui_state(
     state: State<'_, AppState>,
     id: Option<String>,
@@ -758,7 +772,7 @@ pub fn save_ui_state(
 
 #[cfg(test)]
 mod tests {
-    use super::{response_body_preview, save_response_body_data};
+    use super::{env_file_path, response_body_preview, save_response_body_data};
     use tomo_core::model::{BodyCapture, ResponseData, Timing};
 
     fn response(bytes: Vec<u8>, total_size: u64, truncated: bool) -> ResponseData {
@@ -814,5 +828,115 @@ mod tests {
         save_response_body_data(&data, &dest).unwrap();
 
         assert_eq!(std::fs::read(dest).unwrap(), b"preview-and-tail");
+    }
+
+    #[test]
+    fn env_file_path_blocks_traversal() {
+        let root = std::path::Path::new("/tmp/col");
+        assert!(env_file_path(root, "dev").is_ok());
+        assert!(env_file_path(root, "../../etc/passwd").is_err());
+        assert!(env_file_path(root, "a/b").is_err());
+        assert!(env_file_path(root, "..").is_err());
+        assert!(env_file_path(root, "").is_err());
+        assert!(env_file_path(root, "C:evil").is_err());
+        assert!(
+            env_file_path(root, "prod")
+                .unwrap()
+                .ends_with("environments/prod.toml")
+        );
+    }
+}
+
+/// Exercises commands through the REAL Tauri IPC pipeline (MockRuntime), which
+/// serializes/deserializes args exactly like the shipped app. This is the layer
+/// the in-memory mock transport bypasses — the gap that let the snake_case vs
+/// camelCase arg-casing bug ship green. The wire contract is snake_case.
+#[cfg(test)]
+mod ipc_tests {
+    use serde_json::json;
+    use tauri::ipc::{CallbackFn, InvokeResponseBody};
+    use tauri::test::{INVOKE_KEY, MockRuntime, mock_builder, mock_context, noop_assets};
+    use tauri::webview::InvokeRequest;
+    use tauri::{WebviewWindow, WebviewWindowBuilder};
+
+    use crate::state::AppState;
+
+    fn test_webview() -> WebviewWindow<MockRuntime> {
+        let tmp = std::env::temp_dir().join("tomo-ipc-tests");
+        let app = mock_builder()
+            .manage(AppState::new(tmp.join("config"), tmp.join("cache")))
+            .invoke_handler(tauri::generate_handler![
+                crate::commands::cancel_request,
+                crate::commands::create_request
+            ])
+            .build(mock_context(noop_assets()))
+            .expect("mock app builds");
+        WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .expect("mock webview builds")
+    }
+
+    fn invoke(
+        webview: &WebviewWindow<MockRuntime>,
+        cmd: &str,
+        body: serde_json::Value,
+    ) -> Result<InvokeResponseBody, serde_json::Value> {
+        tauri::test::get_ipc_response(
+            webview,
+            InvokeRequest {
+                cmd: cmd.into(),
+                callback: CallbackFn(0),
+                error: CallbackFn(1),
+                url: "tauri://localhost".parse().unwrap(),
+                body: body.into(),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.to_string(),
+            },
+        )
+    }
+
+    // Single-word args (`id`, `rel`) were never affected; a multi-word arg is
+    // the regression surface. `run_id` must arrive as snake_case and reach the
+    // handler (no matching run -> Ok(false)).
+    #[test]
+    fn cancel_request_accepts_snake_case_run_id() {
+        let wv = test_webview();
+        let body = invoke(&wv, "cancel_request", json!({ "run_id": "no-such-run" }))
+            .expect("snake_case run_id must deserialize and reach the handler");
+        assert!(!body.deserialize::<bool>().unwrap());
+    }
+
+    // The contract is snake_case; a camelCase key must NOT satisfy the arg —
+    // proving args are bound by name, not silently defaulted. This assertion
+    // fails against the original (unfixed) code, where camelCase was required.
+    #[test]
+    fn cancel_request_rejects_camel_case_run_id() {
+        let wv = test_webview();
+        let err = invoke(&wv, "cancel_request", json!({ "runId": "x" }))
+            .expect_err("camelCase runId must not satisfy the snake_case `run_id` arg");
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("run_id") || msg.contains("missing") || msg.contains("invalid args"),
+            "expected an argument error, got: {msg}"
+        );
+    }
+
+    // A different multi-word arg (`parent_rel`) on a stateful command: with no
+    // collection open it must REACH the handler and fail with a DOMAIN error,
+    // not an argument-deserialization error — proving the arg bound.
+    #[test]
+    fn create_request_binds_snake_case_parent_rel() {
+        let wv = test_webview();
+        let err = invoke(
+            &wv,
+            "create_request",
+            json!({ "id": "unopened", "parent_rel": "", "name": "New" }),
+        )
+        .expect_err("no collection open -> domain error");
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("collection") || msg.contains("not open") || msg.contains("not_found"),
+            "expected a domain error (arg bound), got: {msg}"
+        );
     }
 }
