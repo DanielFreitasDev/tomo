@@ -366,7 +366,7 @@ fn adding_and_removing_sections() {
 }
 
 #[test]
-fn header_list_growth_rebuilds_array_canonically() {
+fn header_list_growth_preserves_existing_comments() {
     let mut parsed = parse_request(HAND_WRITTEN, p()).unwrap();
     parsed
         .http
@@ -375,8 +375,90 @@ fn header_list_growth_rebuilds_array_canonically() {
     let out = sync_request(HAND_WRITTEN, &parsed, p()).unwrap();
     let back = parse_request(&out, p()).unwrap();
     assert_eq!(back.http.headers, parsed.http.headers);
-    // one item per line style
-    assert!(out.contains("\n  { name = \"Accept\", value = \"application/json\" },\n"));
+    // the comment on the first (unchanged) header must survive an append —
+    // "your comments survive every save" is the product's core promise
+    assert!(
+        out.contains("# required"),
+        "existing array comment survives growth:\n{out}"
+    );
+    // appended row present, one item per line
+    assert!(out.contains("{ name = \"Accept\", value = \"application/json\" }"));
+}
+
+#[test]
+fn header_list_shrink_preserves_earlier_comments() {
+    let src = "[meta]\nname = \"R\"\nseq = 1\n\n[http]\nmethod = \"GET\"\nurl = \"https://api.test/x\"\nheaders = [\n  { name = \"A\", value = \"1\" }, # keep me\n  { name = \"B\", value = \"2\" },\n  { name = \"C\", value = \"3\" },\n]\n";
+    let mut parsed = parse_request(src, p()).unwrap();
+    parsed.http.headers.pop(); // drop C (the tail); the comment sits earlier
+    let out = sync_request(src, &parsed, p()).unwrap();
+    assert!(
+        out.contains("# keep me"),
+        "comment on an earlier surviving header stays:\n{out}"
+    );
+    assert!(!out.contains("\"C\""));
+    let back = parse_request(&out, p()).unwrap();
+    assert_eq!(back.http.headers, parsed.http.headers);
+}
+
+#[test]
+fn inline_table_sections_survive_a_field_edit() {
+    // A user is free to write sections inline; the parser accepts it. Saving
+    // used to blow the section away and drop untouched fields (e.g. `method`),
+    // leaving a file that no longer parses.
+    let src = "meta = { name = \"R\", seq = 7 }\nhttp = { method = \"GET\", url = \"https://api.test/x\" }\n";
+    let mut parsed = parse_request(src, p()).unwrap();
+    parsed.http.url = "https://api.test/v2/x".into();
+    let out = sync_request(src, &parsed, p()).unwrap();
+    let back = parse_request(&out, p()).unwrap();
+    assert_eq!(back.http.method, "GET", "untouched method survived:\n{out}");
+    assert_eq!(back.meta.seq, Some(7), "untouched seq survived:\n{out}");
+    assert_eq!(back.http.url, "https://api.test/v2/x");
+    assert_eq!(back, parsed);
+}
+
+#[test]
+fn crlf_file_body_edit_keeps_body_newlines_and_structure() {
+    let crlf = HAND_WRITTEN.replace('\n', "\r\n");
+    let mut parsed = parse_request(&crlf, p()).unwrap();
+    // the editor produces LF for the new body content
+    parsed.body = Some(Body::Json {
+        content: "{\n  \"name\": \"Ada2\"\n}\n".into(),
+    });
+    let out = sync_request(&crlf, &parsed, p()).unwrap();
+    // structure stays CRLF...
+    assert!(out.contains("[http]\r\n"), "structure stays CRLF:\n{out:?}");
+    // ...but the edited body keeps the exact LF bytes, not silently \r\n-ified
+    assert!(
+        out.contains("{\n  \"name\": \"Ada2\"\n}\n"),
+        "body interior stays LF:\n{out:?}"
+    );
+    assert_eq!(parse_request(&out, p()).unwrap().body, parsed.body);
+}
+
+#[test]
+fn lf_file_with_crlf_inside_string_is_not_flipped() {
+    let src = "[meta]\nname = \"R\"\n\n[http]\nmethod = \"POST\"\nurl = \"https://api.test/x\"\n\n[body]\ntype = \"text\"\ncontent = '''\nline1\r\nline2\n'''\n";
+    let parsed = parse_request(src, p()).unwrap();
+    let out = sync_request(src, &parsed, p()).unwrap();
+    assert!(!out.contains("[meta]\r\n"), "structure stays LF:\n{out:?}");
+    assert!(
+        out.contains("line1\r\nline2"),
+        "in-string CRLF is preserved:\n{out:?}"
+    );
+    assert_eq!(out, src, "no-op save is byte-identical");
+}
+
+#[test]
+fn nested_null_assert_value_errors_instead_of_panicking() {
+    let mut req = full_request();
+    req.tests.asserts = vec![Assert {
+        expr: "res.status".into(),
+        op: AssertOp::In,
+        value: Some(serde_json::json!([200, null, 204])),
+        enabled: true,
+    }];
+    let err = request_to_string(&req).unwrap_err();
+    assert!(err.to_string().contains("null"), "{err}");
 }
 
 #[test]

@@ -165,8 +165,11 @@ fn presence_msg(actual: Option<&Value>, wanted: &str) -> Option<String> {
 
 fn compact(v: &Value) -> String {
     let s = v.to_string();
-    if s.len() > 80 {
-        format!("{}…", &s[..80])
+    // Truncate by char, not byte: a byte slice can split a multibyte char
+    // (accents/emoji in a response value) and panic mid-request.
+    if s.chars().count() > 80 {
+        let head: String = s.chars().take(80).collect();
+        format!("{head}…")
     } else {
         s
     }
@@ -255,4 +258,25 @@ fn length_eq(actual: &Value, expected: Option<&Value>) -> Result<bool, String> {
         other => return Err(format!("length is not defined for {}", compact(other))),
     };
     Ok(got == want)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compact;
+    use serde_json::json;
+
+    #[test]
+    fn compact_truncates_long_multibyte_without_panicking() {
+        // A long accented value renders past 80 bytes; the old byte slice split
+        // a multibyte char and panicked mid-request (this app targets pt-BR).
+        let value = json!("á".repeat(200));
+        let out = compact(&value);
+        assert!(out.ends_with('…'));
+        assert!(out.chars().count() <= 81);
+    }
+
+    #[test]
+    fn compact_leaves_short_values_untouched() {
+        assert_eq!(compact(&json!(201)), "201");
+    }
 }

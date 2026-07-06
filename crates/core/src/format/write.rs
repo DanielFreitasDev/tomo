@@ -43,7 +43,9 @@ pub fn settings_to_string(s: &Settings) -> Result<String, CoreError> {
 
 pub(super) fn validate_asserts(asserts: &[Assert]) -> Result<(), CoreError> {
     for a in asserts {
-        if matches!(a.value, Some(VarValue::Null)) {
+        if let Some(v) = &a.value
+            && contains_null(v)
+        {
             return Err(CoreError::Invalid(format!(
                 "assert `{}`: null values are not representable — use the isNull operator",
                 a.expr
@@ -51,6 +53,18 @@ pub(super) fn validate_asserts(asserts: &[Assert]) -> Result<(), CoreError> {
         }
     }
     Ok(())
+}
+
+/// TOML has no null, so a null anywhere in an assert value (including nested in
+/// an array/object for `in`/`notIn`) is unwritable. Catch it here rather than
+/// letting the value builder panic on a user-typed `[200, null]`.
+fn contains_null(v: &VarValue) -> bool {
+    match v {
+        VarValue::Null => true,
+        VarValue::Array(items) => items.iter().any(contains_null),
+        VarValue::Object(map) => map.values().any(contains_null),
+        _ => false,
+    }
 }
 
 fn request_document(req: &RequestFile) -> Result<DocumentMut, CoreError> {

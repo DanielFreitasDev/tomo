@@ -257,20 +257,176 @@ pub fn sync_environment(text: &str, e: &EnvironmentFile, path: &Path) -> Result<
 // helpers
 // ---------------------------------------------------------------------------
 
-/// Serialize `doc`, restoring the original file's newline style. toml_edit's
-/// DocumentMut normalizes CRLF to LF on parse, which would rewrite every line
-/// of a Windows/CRLF file on a no-op save; converting back keeps the save
-/// byte-identical (the git-friendly promise) regardless of platform.
+/// Serialize `doc`, restoring the original file's newline style. toml_edit
+/// normalizes structural newlines to LF; on a CRLF (Windows) file that would
+/// rewrite every line on a no-op save. We convert back — but ONLY the
+/// structural newlines, never the bytes inside `'''`/`"""`/`"`/`'` strings, so
+/// an edited body keeps exactly the newlines the editor produced instead of
+/// silently gaining `\r` (or, for a mostly-LF file with one CRLF pasted inside
+/// a string, being flipped wholesale to CRLF).
 fn finish(original: &str, doc: &DocumentMut) -> String {
     let out = doc.to_string();
-    if original.contains("\r\n") {
-        // toml_edit may keep CRLF inside string values but normalize structural
-        // newlines to LF, so `out` can be mixed. Collapse to LF, then convert
-        // uniformly to CRLF to match the original file byte-for-byte.
-        out.replace("\r\n", "\n").replace('\n', "\r\n")
+    let target = if structural_uses_crlf(original) {
+        "\r\n"
     } else {
-        out
+        "\n"
+    };
+    rewrite_structural_newlines(&out, target)
+}
+
+/// One event from `scan_toml`.
+enum TomlByte {
+    /// A newline OUTSIDE any string literal (`true` when it was CRLF).
+    StructuralNewline(bool),
+    /// Any other byte, verbatim — including newlines INSIDE a string.
+    Byte(u8),
+}
+
+/// Walk TOML source, emitting a `TomlByte` per structural unit. Only ASCII
+/// structural bytes are ever special-cased, so multibyte UTF-8 content passes
+/// through byte-for-byte.
+fn scan_toml<F: FnMut(TomlByte)>(s: &str, mut emit: F) {
+    #[derive(Clone, Copy, PartialEq)]
+    enum St {
+        Normal,
+        Comment,
+        Basic,
+        BasicMulti,
+        Literal,
+        LiteralMulti,
     }
+    let b = s.as_bytes();
+    let n = b.len();
+    let triple = |i: usize, q: u8| i + 2 < n && b[i + 1] == q && b[i + 2] == q;
+    let mut i = 0usize;
+    let mut st = St::Normal;
+    while i < n {
+        let c = b[i];
+        match st {
+            St::Normal | St::Comment => {
+                if c == b'\r' && i + 1 < n && b[i + 1] == b'\n' {
+                    emit(TomlByte::StructuralNewline(true));
+                    i += 2;
+                    st = St::Normal;
+                } else if c == b'\n' {
+                    emit(TomlByte::StructuralNewline(false));
+                    i += 1;
+                    st = St::Normal;
+                } else if st == St::Comment {
+                    emit(TomlByte::Byte(c));
+                    i += 1;
+                } else {
+                    match c {
+                        b'#' => {
+                            emit(TomlByte::Byte(c));
+                            st = St::Comment;
+                            i += 1;
+                        }
+                        b'"' if triple(i, b'"') => {
+                            emit(TomlByte::Byte(c));
+                            emit(TomlByte::Byte(c));
+                            emit(TomlByte::Byte(c));
+                            st = St::BasicMulti;
+                            i += 3;
+                        }
+                        b'"' => {
+                            emit(TomlByte::Byte(c));
+                            st = St::Basic;
+                            i += 1;
+                        }
+                        b'\'' if triple(i, b'\'') => {
+                            emit(TomlByte::Byte(c));
+                            emit(TomlByte::Byte(c));
+                            emit(TomlByte::Byte(c));
+                            st = St::LiteralMulti;
+                            i += 3;
+                        }
+                        b'\'' => {
+                            emit(TomlByte::Byte(c));
+                            st = St::Literal;
+                            i += 1;
+                        }
+                        _ => {
+                            emit(TomlByte::Byte(c));
+                            i += 1;
+                        }
+                    }
+                }
+            }
+            St::Basic => {
+                emit(TomlByte::Byte(c));
+                if c == b'\\' && i + 1 < n {
+                    emit(TomlByte::Byte(b[i + 1]));
+                    i += 2;
+                } else {
+                    if c == b'"' {
+                        st = St::Normal;
+                    }
+                    i += 1;
+                }
+            }
+            St::BasicMulti => {
+                if c == b'\\' && i + 1 < n {
+                    emit(TomlByte::Byte(c));
+                    emit(TomlByte::Byte(b[i + 1]));
+                    i += 2;
+                } else if c == b'"' && triple(i, b'"') {
+                    emit(TomlByte::Byte(c));
+                    emit(TomlByte::Byte(c));
+                    emit(TomlByte::Byte(c));
+                    st = St::Normal;
+                    i += 3;
+                } else {
+                    emit(TomlByte::Byte(c));
+                    i += 1;
+                }
+            }
+            St::Literal => {
+                emit(TomlByte::Byte(c));
+                if c == b'\'' {
+                    st = St::Normal;
+                }
+                i += 1;
+            }
+            St::LiteralMulti => {
+                if c == b'\'' && triple(i, b'\'') {
+                    emit(TomlByte::Byte(c));
+                    emit(TomlByte::Byte(c));
+                    emit(TomlByte::Byte(c));
+                    st = St::Normal;
+                    i += 3;
+                } else {
+                    emit(TomlByte::Byte(c));
+                    i += 1;
+                }
+            }
+        }
+    }
+}
+
+/// True when the file's structural newlines are predominantly CRLF (newlines
+/// inside strings don't count — a lone pasted CRLF must not flip an LF file).
+fn structural_uses_crlf(s: &str) -> bool {
+    let (mut crlf, mut lf) = (0u32, 0u32);
+    scan_toml(s, |ev| {
+        if let TomlByte::StructuralNewline(was_crlf) = ev {
+            if was_crlf {
+                crlf += 1;
+            } else {
+                lf += 1;
+            }
+        }
+    });
+    crlf > lf
+}
+
+fn rewrite_structural_newlines(s: &str, target: &str) -> String {
+    let mut out: Vec<u8> = Vec::with_capacity(s.len());
+    scan_toml(s, |ev| match ev {
+        TomlByte::StructuralNewline(_) => out.extend_from_slice(target.as_bytes()),
+        TomlByte::Byte(byte) => out.push(byte),
+    });
+    String::from_utf8(out).expect("input was valid UTF-8; only ASCII bytes were transformed")
 }
 
 fn parse_doc(text: &str, path: &Path) -> Result<DocumentMut, CoreError> {
@@ -289,12 +445,30 @@ fn parse_doc(text: &str, path: &Path) -> Result<DocumentMut, CoreError> {
 }
 
 fn ensure_table<'a>(root: &'a mut Table, name: &str) -> &'a mut Table {
-    let exists_as_table = root.get(name).is_some_and(|i| i.as_table().is_some());
-    if !exists_as_table {
-        root.insert(name, Item::Table(Table::new()));
-        // new section appended at the end: give it a separating blank line
-        if let Some(t) = root.get_mut(name).and_then(Item::as_table_mut) {
-            t.decor_mut().set_prefix("\n");
+    match root.get(name) {
+        Some(Item::Table(_)) => {}
+        // A section a user wrote inline — `meta = { name = "x", seq = 3 }` — is a
+        // Value, not a Table, so the old code replaced it with an empty table and
+        // dropped every field the sync didn't happen to rewrite (e.g. `method`),
+        // corrupting the file. Convert it to a real table SEEDED with all current
+        // entries (values + their decor) so untouched fields survive.
+        Some(Item::Value(v)) if v.as_inline_table().is_some() => {
+            let inline = v
+                .as_inline_table()
+                .expect("checked as_inline_table")
+                .clone();
+            let mut t = Table::new();
+            for (k, val) in inline.iter() {
+                t.insert(k, Item::Value(val.clone()));
+            }
+            root.insert(name, Item::Table(t));
+        }
+        _ => {
+            root.insert(name, Item::Table(Table::new()));
+            // new section appended at the end: give it a separating blank line
+            if let Some(t) = root.get_mut(name).and_then(Item::as_table_mut) {
+                t.decor_mut().set_prefix("\n");
+            }
         }
     }
     root.get_mut(name)
@@ -359,9 +533,11 @@ fn merge_table_in_place(root: &mut Table, name: &str, built: Table) {
     }
 }
 
-/// Element-wise sync of a `key = [ {..}, {..} ]` array.
-/// Same length → only changed items are replaced (their line decor kept);
-/// different length → the whole array is rebuilt in canonical style.
+/// Element-wise sync of a `key = [ {..}, {..} ]` array, editing the existing
+/// array in place so that rows the user didn't change — and the comments on
+/// them — survive. Rows in the unchanged common prefix and suffix keep their
+/// exact decor; only the differing middle band is rewritten. Falls back to a
+/// canonical rebuild when there is no existing array to edit.
 fn sync_items<T: PartialEq>(
     parent: &mut Table,
     key: &str,
@@ -376,26 +552,73 @@ fn sync_items<T: PartialEq>(
         parent.remove(key);
         return;
     }
-    if old.len() == new.len()
-        && let Some(arr) = parent
-            .get_mut(key)
-            .and_then(Item::as_value_mut)
-            .and_then(Value::as_array_mut)
-        && arr.len() == new.len()
-    {
-        for (i, (o, n)) in old.iter().zip(new.iter()).enumerate() {
-            if o != n
-                && let Some(slot) = arr.get_mut(i)
-            {
-                let decor = slot.decor().clone();
-                let mut v = Value::InlineTable(build(n));
-                *v.decor_mut() = decor;
-                *slot = v;
-            }
-        }
+
+    let existing_matches_old = parent
+        .get(key)
+        .and_then(Item::as_value)
+        .and_then(Value::as_array)
+        .is_some_and(|arr| arr.len() == old.len());
+
+    // Only edit in place when the on-disk array lines up with `old` element for
+    // element; otherwise a prior hand-edit could make indices meaningless.
+    if !existing_matches_old {
+        parent.insert(key, Item::Value(items_array(new, build)));
         return;
     }
-    parent.insert(key, Item::Value(items_array(new, build)));
+    let arr = parent
+        .get_mut(key)
+        .and_then(Item::as_value_mut)
+        .and_then(Value::as_array_mut)
+        .expect("checked as_array above");
+
+    // common prefix, then common suffix that doesn't overlap the prefix
+    let mut pre = 0;
+    while pre < old.len() && pre < new.len() && old[pre] == new[pre] {
+        pre += 1;
+    }
+    let mut suf = 0;
+    while suf < old.len() - pre
+        && suf < new.len() - pre
+        && old[old.len() - 1 - suf] == new[new.len() - 1 - suf]
+    {
+        suf += 1;
+    }
+
+    // Reconcile the changed middle band old[pre..old.len()-suf] ->
+    // new[pre..new.len()-suf]. Overlapping positions are edited IN PLACE so the
+    // slot's decor (a trailing `# comment`, which toml_edit stores on the next
+    // element's prefix) survives; only genuine inserts/removes touch structure.
+    let mid_old_len = old.len() - suf - pre;
+    let mid_new = &new[pre..new.len() - suf];
+    let overlap = mid_old_len.min(mid_new.len());
+    for k in 0..overlap {
+        if old[pre + k] == new[pre + k] {
+            continue; // coincidental match inside the band — leave it untouched
+        }
+        let idx = pre + k;
+        let decor = arr.get(idx).map(|v| v.decor().clone());
+        let mut v = Value::InlineTable(build(&mid_new[k]));
+        if let Some(d) = decor {
+            *v.decor_mut() = d;
+        }
+        if let Some(slot) = arr.get_mut(idx) {
+            *slot = v;
+        }
+    }
+    // remove surplus old rows (truncation) from the tail of the band
+    for _ in 0..(mid_old_len - overlap) {
+        arr.remove(pre + overlap);
+    }
+    // insert surplus new rows (growth), one item per line
+    for (offset, item) in mid_new[overlap..].iter().enumerate() {
+        let mut v = Value::InlineTable(build(item));
+        v.decor_mut().set_prefix("\n  ");
+        arr.insert(pre + overlap + offset, v);
+    }
+    arr.set_trailing_comma(true);
+    if !arr.trailing().as_str().is_some_and(|t| t.contains('\n')) {
+        arr.set_trailing("\n");
+    }
 }
 
 fn sync_auth(root: &mut Table, old: &Option<Auth>, new: &Option<Auth>) {
