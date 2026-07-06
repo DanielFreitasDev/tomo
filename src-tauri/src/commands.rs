@@ -63,6 +63,36 @@ fn env_file_path(root: &Path, name: &str) -> ApiResult<PathBuf> {
     Ok(root.join(ENVIRONMENTS_DIR).join(format!("{name}.toml")))
 }
 
+/// Load the selected environment strictly. A selected environment that cannot be
+/// read or parsed is a hard error — never a silent fall-through to "no
+/// environment", which would run the request against the wrong host or without
+/// its environment-scoped auth. Callers pass `None` when no env is selected.
+fn load_selected_environment(root: &Path, name: &str) -> ApiResult<EnvironmentFile> {
+    let path = env_file_path(root, name)?;
+    let text = read_text(&path).map_err(|e| {
+        ApiError::new(
+            "invalid",
+            format!("selected environment `{name}` could not be read: {e}"),
+        )
+    })?;
+    parse_environment(&text, &path).map_err(ApiError::from)
+}
+
+/// Load `secrets.toml` if present. A missing file is fine (secrets are optional),
+/// but a present-but-unparseable file is a hard error rather than a silent drop
+/// that would send the request without its secret-backed auth.
+fn load_optional_secrets(root: &Path) -> ApiResult<Option<SecretsFile>> {
+    let path = root.join(SECRETS_FILE);
+    match std::fs::read_to_string(&path) {
+        Ok(text) => Ok(Some(parse_secrets(&text, &path).map_err(ApiError::from)?)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(ApiError::new(
+            "invalid",
+            format!("secrets file could not be read: {e}"),
+        )),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // collections
 // ---------------------------------------------------------------------------
@@ -477,21 +507,15 @@ pub async fn send_request(
         None => disk_request,
     };
 
-    // environment + secrets + dotenv snapshots
+    // environment + secrets + dotenv snapshots. A selected environment — or a
+    // present secrets file — that fails to read/parse is surfaced as an error,
+    // never silently dropped (which would run the request against the wrong host
+    // or without its environment/secret-backed auth).
     let environment = match &env {
-        Some(name) => env_file_path(&runtime.root, name).ok().and_then(|path| {
-            read_text(&path)
-                .ok()
-                .and_then(|t| parse_environment(&t, &path).ok())
-        }),
+        Some(name) => Some(load_selected_environment(&runtime.root, name)?),
         None => None,
     };
-    let secrets = {
-        let path = runtime.root.join(SECRETS_FILE);
-        read_text(&path)
-            .ok()
-            .and_then(|t| parse_secrets(&t, &path).ok())
-    };
+    let secrets = load_optional_secrets(&runtime.root)?;
     let dotenv = tomo_core::vars::load_dotenv(&runtime.root);
     let runtime_vars = runtime
         .runtime_vars
@@ -723,18 +747,11 @@ pub fn export_curl(
     }
 
     let selected_env = runtime.selected_env.lock().ok().and_then(|g| g.clone());
-    let environment = selected_env.as_ref().and_then(|name| {
-        let path = env_file_path(&runtime.root, name).ok()?;
-        read_text(&path)
-            .ok()
-            .and_then(|t| parse_environment(&t, &path).ok())
-    });
-    let secrets = {
-        let path = runtime.root.join(SECRETS_FILE);
-        read_text(&path)
-            .ok()
-            .and_then(|t| parse_secrets(&t, &path).ok())
+    let environment = match &selected_env {
+        Some(name) => Some(load_selected_environment(&runtime.root, name)?),
+        None => None,
     };
+    let secrets = load_optional_secrets(&runtime.root)?;
     let dotenv = tomo_core::vars::load_dotenv(&runtime.root);
     let runtime_vars = runtime
         .runtime_vars
@@ -806,7 +823,9 @@ pub fn save_ui_state(
 #[cfg(test)]
 mod tests {
     use super::{
-        env_file_path, read_existing_for_save, response_body_preview, save_response_body_data,
+        ENVIRONMENTS_DIR, SECRETS_FILE, env_file_path, load_optional_secrets,
+        load_selected_environment, read_existing_for_save, response_body_preview,
+        save_response_body_data,
     };
     use tomo_core::model::{BodyCapture, ResponseData, Timing};
 
@@ -900,6 +919,49 @@ mod tests {
                 .unwrap()
                 .ends_with("environments/prod.toml")
         );
+    }
+
+    #[test]
+    fn selected_environment_that_fails_to_parse_is_an_error_not_silent_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let envs = dir.path().join(ENVIRONMENTS_DIR);
+        std::fs::create_dir_all(&envs).unwrap();
+
+        // a valid environment loads
+        std::fs::write(
+            envs.join("prod.toml"),
+            "[meta]\nname = \"prod\"\n\n[vars]\nbase = \"https://api.example.com\"\n",
+        )
+        .unwrap();
+        assert!(load_selected_environment(dir.path(), "prod").is_ok());
+
+        // a malformed environment is a hard error — never a silent None that
+        // used to route the request to the default/no-env target.
+        std::fs::write(envs.join("broken.toml"), "[meta]\nname =\n").unwrap();
+        assert!(load_selected_environment(dir.path(), "broken").is_err());
+
+        // a selected-but-missing environment is surfaced, not swallowed.
+        assert!(load_selected_environment(dir.path(), "ghost").is_err());
+    }
+
+    #[test]
+    fn optional_secrets_tolerates_missing_but_surfaces_a_parse_error() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // no secrets.toml at all -> None (secrets are optional)
+        assert!(load_optional_secrets(dir.path()).unwrap().is_none());
+
+        // present-but-unparseable -> error, not a silent drop of secret auth
+        std::fs::write(dir.path().join(SECRETS_FILE), "this is = = not toml").unwrap();
+        assert!(load_optional_secrets(dir.path()).is_err());
+
+        // valid secrets -> Some
+        std::fs::write(
+            dir.path().join(SECRETS_FILE),
+            "[collection]\ntoken = \"abc\"\n",
+        )
+        .unwrap();
+        assert!(load_optional_secrets(dir.path()).unwrap().is_some());
     }
 }
 
