@@ -969,7 +969,10 @@ mod tests {
 /// serializes/deserializes args exactly like the shipped app. This is the layer
 /// the in-memory mock transport bypasses — the gap that let the snake_case vs
 /// camelCase arg-casing bug ship green. The wire contract is snake_case.
-#[cfg(test)]
+// Gated off Windows: the `tauri/test` feature makes the tomo_lib test binary
+// fail to load there (STATUS_ENTRYPOINT_NOT_FOUND at startup). The IPC wire
+// contract is platform-independent, so Ubuntu coverage is sufficient.
+#[cfg(all(test, not(windows)))]
 mod ipc_tests {
     use serde_json::json;
     use tauri::ipc::{CallbackFn, InvokeResponseBody};

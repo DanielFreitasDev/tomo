@@ -34,6 +34,12 @@ trash = "5.2.6"
 
 [dev-dependencies]
 tempfile = { workspace = true }
-# `test` enables tauri::test (MockRuntime) for the IPC integration tests. As a
-# dev-dependency it is active only under `cargo test`, never in the release build.
+
+# `test` enables tauri::test (MockRuntime) for the IPC integration tests. Scoped
+# to non-Windows: there the `test` feature makes the tomo_lib test binary fail to
+# load (STATUS_ENTRYPOINT_NOT_FOUND at startup, before any test runs), so the
+# MockRuntime IPC tests are `cfg(not(windows))` too. As a dev-dependency it is
+# active only under `cargo test`, never in the release build; the IPC wire
+# contract is platform-independent, so Ubuntu coverage is sufficient.
+[target.'cfg(not(windows))'.dev-dependencies]
 tauri = { version = "2", features = ["test"] }
