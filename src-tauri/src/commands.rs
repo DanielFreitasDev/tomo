@@ -375,6 +375,7 @@ pub fn save_environment(
         Ok(existing) => sync_environment(&existing, &env, &path)?,
         Err(_) => environment_to_string(&env)?,
     };
+    runtime.suppressor.register(&path, &text);
     atomic_write(&path, &text)?;
     if let Some(prev) = previous_name
         && prev != name
@@ -423,7 +424,9 @@ pub fn save_secrets(state: State<'_, AppState>, id: String, secrets: Value) -> A
     // gitignore MUST be updated before secrets ever hit disk
     fsops::upsert_gitignore(&runtime.root)?;
     let path = runtime.root.join(SECRETS_FILE);
-    atomic_write(&path, &secrets_to_string(&secrets))?;
+    let text = secrets_to_string(&secrets);
+    runtime.suppressor.register(&path, &text);
+    atomic_write(&path, &text)?;
     Ok(())
 }
 

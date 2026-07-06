@@ -6,7 +6,14 @@ import { Input } from '@/components/ui/input'
 import { TabPanel, UnderlineTabs } from '@/components/ui/tabs'
 import { useT } from '@/i18n'
 import { cancelActiveRequest, sendActiveRequest } from '@/stores/actions/request-actions'
-import { editTab, keepMyChanges, reloadTabFromDisk, tabContent } from '@/stores/actions/tab-actions'
+import {
+  closeTabImmediately,
+  editTab,
+  keepMyChanges,
+  reloadTabFromDisk,
+  saveTab,
+  tabContent,
+} from '@/stores/actions/tab-actions'
 import { useCollections } from '@/stores/collections'
 import { useResponses } from '@/stores/responses'
 import { type SubTab, type Tab, useTabs } from '@/stores/tabs'
@@ -38,17 +45,28 @@ export function RequestPane({ tab }: { tab: Tab }) {
           <TriangleAlert size={13} style={{ color: 'var(--warning)' }} />
           <span className="min-w-0 flex-1 truncate">
             {tab.conflict === 'file-deleted'
-              ? `${tab.rel} was deleted on disk`
+              ? t('toast.fileDeletedOnDisk', { name: tab.rel })
               : t('toast.fileChangedOnDisk', { name: tab.rel })}
           </span>
-          <Button size="sm" variant="secondary" onClick={() => keepMyChanges(tab.id)}>
-            {t('toast.keepMine')}
-          </Button>
-          {tab.conflict === 'disk-changed' ? (
-            <Button size="sm" variant="secondary" onClick={() => void reloadTabFromDisk(tab.id)}>
-              {t('toast.reloadFromDisk')}
-            </Button>
-          ) : null}
+          {tab.conflict === 'file-deleted' ? (
+            <>
+              <Button size="sm" variant="secondary" onClick={() => void saveTab(tab.id)}>
+                {t('toast.saveAsNew')}
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => closeTabImmediately(tab.id)}>
+                {t('toast.close')}
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button size="sm" variant="secondary" onClick={() => keepMyChanges(tab.id)}>
+                {t('toast.keepMine')}
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => void reloadTabFromDisk(tab.id)}>
+                {t('toast.reloadFromDisk')}
+              </Button>
+            </>
+          )}
         </div>
       ) : null}
 

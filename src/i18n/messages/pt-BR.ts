@@ -100,6 +100,9 @@ export const ptBR: Record<MessageKey, string> = {
   'toast.deleted': 'Excluído',
   'toast.error': 'Algo deu errado',
   'toast.fileChangedOnDisk': '“{name}” mudou no disco',
+  'toast.fileDeletedOnDisk': '“{name}” foi excluído no disco',
   'toast.keepMine': 'Manter minhas alterações',
   'toast.reloadFromDisk': 'Recarregar do disco',
+  'toast.saveAsNew': 'Salvar como novo',
+  'toast.close': 'Fechar',
 }

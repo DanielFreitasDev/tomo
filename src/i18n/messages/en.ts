@@ -98,8 +98,11 @@ export const en = {
   'toast.deleted': 'Deleted',
   'toast.error': 'Something went wrong',
   'toast.fileChangedOnDisk': '“{name}” changed on disk',
+  'toast.fileDeletedOnDisk': '“{name}” was deleted on disk',
   'toast.keepMine': 'Keep my changes',
   'toast.reloadFromDisk': 'Reload from disk',
+  'toast.saveAsNew': 'Save as new',
+  'toast.close': 'Close',
 } as const
 
 export type MessageKey = keyof typeof en

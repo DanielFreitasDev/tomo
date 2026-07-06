@@ -8,10 +8,11 @@
  * 4. seq-only change -> merge seq into draft, stay dirty
  * 5. real difference -> keep draft, mark conflict (never clobber typing)
  */
-import { type RequestFileDto, transport } from '@/lib/transport'
-import { requestKey, useCollections } from '@/stores/collections'
+import { type RequestFileDto, type TreeNodeDto, transport } from '@/lib/transport'
+import { requestKey, useCollections, walkTree } from '@/stores/collections'
 import { useEnvironments } from '@/stores/environments'
 import { useTabs } from '@/stores/tabs'
+import { closeTabImmediately } from './tab-actions'
 
 export async function openCollection(path: string): Promise<string> {
   const tree = await transport().invoke('open_collection', { path })
@@ -159,11 +160,50 @@ export function reconcileFileChanged(
   return 'conflict'
 }
 
+/**
+ * A structural change (git pull, external rename/delete, an atomic-save editor)
+ * emits only `tree-changed`, never per-file `file-changed`. Reconcile open tabs
+ * against the fresh tree: files that vanished become deleted-conflicts (or close
+ * when clean), and files still present are re-read so a rename-style external
+ * edit doesn't leave a tab showing stale content forever.
+ */
+export async function reconcileTabsWithTree(
+  id: string,
+  nodes: TreeNodeDto[],
+  invalidRels: Set<string>,
+): Promise<void> {
+  const present = new Set<string>()
+  walkTree(nodes, (n) => {
+    if (n.kind === 'request') present.add(n.rel)
+  })
+  for (const rel of invalidRels) present.add(rel) // a broken file still exists
+
+  const tabs = useTabs.getState().tabs.filter((tab) => tab.collectionId === id)
+  for (const tab of tabs) {
+    if (!present.has(tab.rel)) {
+      if (tab.draft) useTabs.getState().setConflict(tab.id, 'file-deleted')
+      else closeTabImmediately(tab.id)
+      continue
+    }
+    if (invalidRels.has(tab.rel)) continue // can't re-read an unparseable file
+    try {
+      const { request, hash } = await transport().invoke('read_request', { id, rel: tab.rel })
+      const mirror = useCollections.getState().requests[requestKey(id, tab.rel)]
+      if (mirror && mirror.hash === hash) continue // disk unchanged — nothing to do
+      reconcileFileChanged(id, tab.rel, hash, request)
+    } catch {
+      // a transient read failure will be retried on the next tree-changed
+    }
+  }
+}
+
 /** Wire transport events into the stores. Call once at bootstrap. */
 export function bootTransportListeners(): () => void {
   const t = transport()
   const un1 = t.listen('watcher:tree-changed', ({ tree }) => {
     useCollections.getState().setCollection(tree)
+    const invalidRels = new Set((tree.invalid ?? []).map((entry) => entry.rel))
+    void reconcileTabsWithTree(tree.id, tree.nodes, invalidRels)
   })
   const un2 = t.listen('watcher:file-changed', ({ id, rel, hash, request }) => {
     reconcileFileChanged(id, rel, hash, request)

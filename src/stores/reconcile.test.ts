@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { RequestFileDto } from '@/lib/transport'
 import { setTransport } from '@/lib/transport'
 import { createMockTransport } from '@/lib/transport/mock'
-import { openCollection, reconcileFileChanged } from './actions/fs-actions'
+import { openCollection, reconcileFileChanged, reconcileTabsWithTree } from './actions/fs-actions'
 import { editTab, openRequestTab } from './actions/tab-actions'
 import { useCollections } from './collections'
 import { useTabs } from './tabs'
@@ -93,5 +93,23 @@ describe('watcher reconciliation matrix', () => {
     const incoming = diskRequest()
     const verdict = reconcileFileChanged(ID, 'health.toml', 'h6', incoming)
     expect(verdict).toBe('untracked')
+  })
+
+  it('external deletion closes a clean tab', async () => {
+    expect(useTabs.getState().byId(tabId)).toBeDefined()
+    // an empty tree = the file vanished on disk (git checkout, rm, external move)
+    await reconcileTabsWithTree(ID, [], new Set())
+    expect(useTabs.getState().byId(tabId)).toBeUndefined()
+  })
+
+  it('external deletion of a dirty tab marks it file-deleted, keeps the draft', async () => {
+    editTab(tabId, (d) => {
+      d.http.url = 'https://mine.example'
+      return d
+    })
+    await reconcileTabsWithTree(ID, [], new Set())
+    const tab = useTabs.getState().byId(tabId)
+    expect(tab?.conflict).toBe('file-deleted')
+    expect(tab?.draft?.http.url).toBe('https://mine.example')
   })
 })
