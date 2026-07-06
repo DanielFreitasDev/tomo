@@ -38,6 +38,15 @@ pub fn resolve_rel(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
                 "path traversal rejected: `{rel}`"
             )));
         }
+        // A `:` marks a Windows drive/prefix: `PathBuf::push("C:\\...")` REPLACES
+        // the whole buffer on Windows, escaping the collection root. `:` is also
+        // never valid in a slug, so reject it on every platform (so Linux CI
+        // catches the Windows-only escape too).
+        if seg.contains(':') {
+            return Err(CoreError::Invalid(format!(
+                "path traversal rejected: `{rel}`"
+            )));
+        }
         path.push(seg);
     }
     Ok(path)

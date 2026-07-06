@@ -47,15 +47,28 @@ impl TokenCache {
 
 fn fingerprint(cfg: &OAuth2Config) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(cfg.token_url.as_bytes());
-    hasher.update(cfg.client_id.as_bytes());
-    hasher.update(cfg.client_secret.as_bytes());
-    hasher.update(match cfg.grant {
+    // Length-prefix every field so distinct configs can't collide by
+    // concatenation (client_id="app1" vs client_id="app"+secret starting "1"),
+    // and include EVERY credential-bearing field — a token is only
+    // interchangeable across requests whose full auth config is identical.
+    let mut field = |bytes: &[u8]| {
+        hasher.update(&(bytes.len() as u64).to_le_bytes());
+        hasher.update(bytes);
+    };
+    field(cfg.token_url.as_bytes());
+    field(cfg.client_id.as_bytes());
+    field(cfg.client_secret.as_bytes());
+    field(match cfg.grant {
         OAuth2Grant::ClientCredentials => b"cc",
         OAuth2Grant::Password => b"pw",
     });
-    hasher.update(cfg.username.as_deref().unwrap_or("").as_bytes());
-    hasher.update(cfg.scopes.join(" ").as_bytes());
+    field(match cfg.client_auth {
+        ClientAuth::BasicHeader => b"basic",
+        ClientAuth::Body => b"body",
+    });
+    field(cfg.username.as_deref().unwrap_or("").as_bytes());
+    field(cfg.password.as_deref().unwrap_or("").as_bytes());
+    field(cfg.scopes.join(" ").as_bytes());
     *hasher.finalize().as_bytes()
 }
 
@@ -176,9 +189,44 @@ fn parse_expires_in_secs(v: &serde_json::Value) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_expires_in_secs;
+    use super::{fingerprint, parse_expires_in_secs};
+    use crate::model::{ClientAuth, OAuth2Config, OAuth2Grant};
     use serde_json::json;
     use std::time::{Duration, Instant};
+
+    fn cfg() -> OAuth2Config {
+        OAuth2Config {
+            grant: OAuth2Grant::Password,
+            token_url: "https://id.example/token".into(),
+            client_id: "app".into(),
+            client_secret: "s".into(),
+            username: Some("u".into()),
+            password: Some("p".into()),
+            scopes: vec!["read".into()],
+            client_auth: ClientAuth::Body,
+            cache_token: true,
+        }
+    }
+
+    #[test]
+    fn fingerprint_is_collision_free_and_credential_complete() {
+        // identical configs share a cache key
+        assert_eq!(fingerprint(&cfg()), fingerprint(&cfg()));
+
+        // unseparated concatenation must NOT collide: ("app1","x") vs ("app","1x")
+        let mut a = cfg();
+        a.client_id = "app1".into();
+        a.client_secret = "x".into();
+        let mut b = cfg();
+        b.client_id = "app".into();
+        b.client_secret = "1x".into();
+        assert_ne!(fingerprint(&a), fingerprint(&b));
+
+        // password is part of the token's identity (was omitted before)
+        let mut c = cfg();
+        c.password = Some("other".into());
+        assert_ne!(fingerprint(&cfg()), fingerprint(&c));
+    }
 
     #[test]
     fn expires_in_accepts_int_string_and_float() {

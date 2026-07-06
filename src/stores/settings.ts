@@ -26,9 +26,16 @@ export const useSettings = create<SettingsState>((set, get) => ({
   loaded: false,
 
   async load() {
-    const settings = await transport().invoke('get_settings', {})
-    set({ ...settings, loaded: true })
-    applyThemeToDocument(settings.theme)
+    try {
+      const settings = await transport().invoke('get_settings', {})
+      set({ ...settings, loaded: true })
+      applyThemeToDocument(settings.theme)
+    } catch {
+      // Corrupt/unreadable settings must never brick the app on a blank screen:
+      // boot with the in-store defaults instead of leaving `loaded` false.
+      set({ loaded: true })
+      applyThemeToDocument(get().theme)
+    }
   },
 
   update(patch) {

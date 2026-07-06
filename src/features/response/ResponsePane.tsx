@@ -29,6 +29,20 @@ const HEAD_PREVIEW = 64 * 1024
 
 const IDLE_STATE = { phase: 'idle' } as const
 
+/**
+ * Decode a response body, tolerating a hostile/unknown charset. `new
+ * TextDecoder(label)` throws a RangeError on an unknown label (`fatal:false`
+ * does NOT protect the constructor), so a server replying `charset=bogus` would
+ * otherwise take the whole UI down through the error boundary.
+ */
+function decodeBody(bytes: Uint8Array, charset?: string): string {
+  try {
+    return new TextDecoder(charset ?? 'utf-8', { fatal: false }).decode(bytes)
+  } catch {
+    return new TextDecoder('utf-8', { fatal: false }).decode(bytes)
+  }
+}
+
 type BodyView = 'pretty' | 'raw' | 'preview'
 type RespTab = 'body' | 'headers' | 'tests'
 
@@ -46,7 +60,7 @@ export function ResponsePane({ tab }: { tab: Tab }) {
   const bodyText = useMemo(() => {
     if (!bytes || !meta) return ''
     if (bytes.byteLength > MOUNT_MAX) return ''
-    return new TextDecoder(meta.body.charset ?? 'utf-8', { fatal: false }).decode(bytes)
+    return decodeBody(bytes, meta.body.charset)
   }, [bytes, meta])
 
   const prettyText = useMemo(() => {

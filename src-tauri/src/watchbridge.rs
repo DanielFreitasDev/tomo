@@ -29,10 +29,17 @@ struct FileChangedPayload {
 pub fn start(app: AppHandle, id: String, runtime: Arc<CollectionRuntime>) {
     let root = runtime.root.clone();
     let suppressor: Arc<WriteSuppressor> = runtime.suppressor.clone();
-    let runtime_for_events = runtime.clone();
+    // Capture a WEAK ref, not a strong one: the runtime owns the watcher which
+    // owns this closure, so a strong Arc here would be a reference cycle that
+    // `close_collection`'s map removal could never break — the watcher would
+    // live forever and keep emitting events for a closed collection.
+    let weak = Arc::downgrade(&runtime);
 
     let handler = move |event: WatchEvent| match event {
         WatchEvent::TreeChanged => {
+            let Some(runtime_for_events) = weak.upgrade() else {
+                return; // collection was closed — stop emitting for it
+            };
             if let Ok(tree) = scan_collection(&root) {
                 let envs = list_environments(&root);
                 let selected = runtime_for_events

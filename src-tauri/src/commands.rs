@@ -169,7 +169,13 @@ pub fn create_collection(
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn close_collection(state: State<'_, AppState>, id: String) -> ApiResult<()> {
-    state.collections.remove(&id);
+    // Explicitly stop the watcher so its debouncer thread and inotify handles
+    // are released promptly, not whenever the last stray Arc happens to drop.
+    if let Some((_, runtime)) = state.collections.remove(&id)
+        && let Ok(mut slot) = runtime._watcher.lock()
+    {
+        *slot = None;
+    }
     Ok(())
 }
 

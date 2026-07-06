@@ -157,6 +157,11 @@ fn path_traversal_is_rejected() {
     assert!(resolve_rel(root, "a/../../evil").is_err());
     assert!(resolve_rel(root, "/etc/passwd").is_err());
     assert!(resolve_rel(root, "a\\..\\evil").is_err());
+    // Windows drive prefixes: PathBuf::push("C:...") REPLACES the buffer on
+    // Windows, escaping the root. Rejected on every platform so CI catches it.
+    assert!(resolve_rel(root, "C:/Users/evil.toml").is_err());
+    assert!(resolve_rel(root, "C:evil").is_err());
+    assert!(resolve_rel(root, "ok/C:evil").is_err());
     assert!(resolve_rel(root, "ok/nested.toml").is_ok());
 }
 
