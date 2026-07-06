@@ -43,6 +43,13 @@ impl TokenCache {
     pub fn clear(&self) {
         self.map.lock().expect("token cache lock").clear();
     }
+
+    /// Drop one config's cached token so the next `get_token` re-fetches it —
+    /// used for refresh-on-401 when the server rejects a token we thought fresh.
+    pub fn invalidate(&self, cfg: &OAuth2Config) {
+        let key = fingerprint(cfg);
+        self.map.lock().expect("token cache lock").remove(&key);
+    }
 }
 
 fn fingerprint(cfg: &OAuth2Config) -> [u8; 32] {

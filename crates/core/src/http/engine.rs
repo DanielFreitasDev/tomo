@@ -223,23 +223,36 @@ pub async fn execute(cfg: &EngineConfig, spec: RunSpec<'_>) -> Result<ResponseDa
     )
     .await?;
 
-    // ---- send (cancellable; digest does a 401-challenge round-trip) --------
-    let started = Instant::now();
-    let response = match &auth {
-        Auth::Digest { username, password } => {
-            send_with_digest(builder, username, password, &spec.cancel, opts.timeout_ms).await?
-        }
-        _ => tokio::select! {
-            biased;
-            _ = spec.cancel.cancelled() => return Err(CoreError::Cancelled),
-            r = builder.send() => r.map_err(|e| CoreError::from_reqwest(e, opts.timeout_ms))?,
-        },
-    };
-
     let capture_cfg = CaptureConfig {
         cap_bytes: cfg.network.response_cap_bytes,
         spill_dir: cfg.spill_dir.clone(),
     };
+
+    // ---- send (cancellable; digest does a 401-challenge round-trip) --------
+    let started = Instant::now();
+    // Keep a clone of an OAuth2 request so a token the server rejects (401) can
+    // be refreshed and the request retried exactly once. `try_clone` is None for
+    // streamed bodies — those just don't get the retry.
+    let mut oauth_retry: Option<reqwest::Request> = None;
+    let response = match &auth {
+        Auth::Digest { username, password } => {
+            send_with_digest(builder, username, password, &spec.cancel, opts.timeout_ms).await?
+        }
+        _ => {
+            let request = builder
+                .build()
+                .map_err(|e| CoreError::from_reqwest(e, opts.timeout_ms))?;
+            if matches!(&auth, Auth::Oauth2(_)) {
+                oauth_retry = request.try_clone();
+            }
+            tokio::select! {
+                biased;
+                _ = spec.cancel.cancelled() => return Err(CoreError::Cancelled),
+                r = client.execute(request) => r.map_err(|e| CoreError::from_reqwest(e, opts.timeout_ms))?,
+            }
+        }
+    };
+
     let mut data = capture(
         response,
         &capture_cfg,
@@ -248,6 +261,43 @@ pub async fn execute(cfg: &EngineConfig, spec: RunSpec<'_>) -> Result<ResponseDa
         opts.timeout_ms,
     )
     .await?;
+
+    // ---- OAuth2 refresh-on-401: one retry with a freshly-minted token ------
+    if data.status == 401
+        && let Auth::Oauth2(oauth_cfg) = &auth
+        && let Some(mut retry) = oauth_retry.take()
+    {
+        spec.token_cache.invalidate(oauth_cfg);
+        let fresh = get_token(
+            &client,
+            oauth_cfg,
+            &spec.token_cache,
+            &spec.cancel,
+            opts.timeout_ms,
+        )
+        .await?;
+        let value = HeaderValue::from_str(&format!("Bearer {fresh}")).map_err(|_| {
+            CoreError::Invalid("refreshed OAuth2 token is not a valid header".into())
+        })?;
+        retry
+            .headers_mut()
+            .insert(reqwest::header::AUTHORIZATION, value);
+        let started = Instant::now();
+        let response = tokio::select! {
+            biased;
+            _ = spec.cancel.cancelled() => return Err(CoreError::Cancelled),
+            r = client.execute(retry) => r.map_err(|e| CoreError::from_reqwest(e, opts.timeout_ms))?,
+        };
+        data = capture(
+            response,
+            &capture_cfg,
+            &spec.cancel,
+            started,
+            opts.timeout_ms,
+        )
+        .await?;
+    }
+
     data.warnings = warnings;
 
     // parsed JSON body reused by post-scripts and asserts

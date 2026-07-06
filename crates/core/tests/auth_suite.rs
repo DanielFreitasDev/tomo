@@ -365,3 +365,53 @@ async fn token_endpoint_errors_are_readable() {
     assert!(msg.contains("token endpoint returned"), "{msg}");
     assert!(msg.contains("invalid_client"), "{msg}");
 }
+
+#[tokio::test]
+async fn oauth2_refreshes_and_retries_once_on_401() {
+    let server = MockServer::start().await;
+    let hits = Arc::new(AtomicU32::new(0));
+
+    // token endpoint hands out tok-1, then tok-2 when the first is refreshed
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(TokenEndpoint {
+            hits: hits.clone(),
+            expires_in: 3600,
+        })
+        .mount(&server)
+        .await;
+    // the resource rejects the first (cached) token...
+    Mock::given(method("GET"))
+        .and(path("/api"))
+        .and(header("authorization", "Bearer tok-1"))
+        .respond_with(ResponseTemplate::new(401))
+        .mount(&server)
+        .await;
+    // ...and accepts the refreshed one
+    Mock::given(method("GET"))
+        .and(path("/api"))
+        .and(header("authorization", "Bearer tok-2"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let req = oauth2_request(
+        &server.uri(),
+        OAuth2Grant::ClientCredentials,
+        ClientAuth::BasicHeader,
+        true,
+    );
+
+    // 401 with the stale token → invalidate + refetch (tok-2) → retry → 200.
+    // A second `tok-2` 200 mock (not a third token) proves it retries only once.
+    let res = run(&req, TokenCache::new()).await.unwrap();
+    assert_eq!(
+        res.status, 200,
+        "a 401 must trigger exactly one refresh-and-retry"
+    );
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        2,
+        "token fetched once, then refreshed exactly once"
+    );
+}
