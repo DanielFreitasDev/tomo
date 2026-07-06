@@ -7,6 +7,7 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ChevronRight, FilePlus2, Folder as FolderIcon, FolderPlus } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { ConfirmDialog } from '@/components/ui/dialog'
 import { ContextMenu, type MenuEntry } from '@/components/ui/menu'
 import { MethodBadge } from '@/components/ui/method-badge'
 import { toast } from '@/components/ui/toast'
@@ -55,6 +56,7 @@ export function Tree({ collectionId, nodes }: { collectionId: string; nodes: Tre
   const [focusedIndex, setFocusedIndex] = useState(0)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<{ rel: string; mode: 'into' | 'after' } | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<VisibleRow | null>(null)
 
   useEffect(() => {
     if (focusedIndex >= rows.length) setFocusedIndex(Math.max(0, rows.length - 1))
@@ -104,23 +106,28 @@ export function Tree({ collectionId, nodes }: { collectionId: string; nodes: Tre
         break
       case 'Delete':
         e.preventDefault()
-        void confirmDelete(row)
+        setPendingDelete(row)
         break
       default:
         break
     }
   }
 
-  const confirmDelete = async (row: VisibleRow) => {
-    await deleteNode(collectionId, row.rel)
-    toast.success(t('toast.deleted'), row.name)
+  const doDelete = async (row: VisibleRow) => {
+    setPendingDelete(null)
+    try {
+      await deleteNode(collectionId, row.rel)
+      toast.success(t('toast.deleted'), row.name)
+    } catch (err) {
+      toast.danger(t('toast.error'), err instanceof Error ? err.message : row.name)
+    }
   }
 
   const entriesFor = (row: VisibleRow): MenuEntry[] => {
     const common: MenuEntry[] = [
       { label: t('common.rename'), kbd: 'F2', onSelect: () => setRenaming(row.rel) },
       'separator',
-      { label: t('common.delete'), danger: true, onSelect: () => void confirmDelete(row) },
+      { label: t('common.delete'), danger: true, onSelect: () => setPendingDelete(row) },
     ]
     if (row.kind === 'folder') {
       return [
@@ -180,107 +187,123 @@ export function Tree({ collectionId, nodes }: { collectionId: string; nodes: Tre
   }
 
   return (
-    <div
-      ref={scrollRef}
-      className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2"
-      onKeyDown={onKeyDown}
-      role="tree"
-      aria-label={t('sidebar.collections')}
-    >
-      <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
-        {virtualizer.getVirtualItems().map((v) => {
-          const row = rows[v.index]
-          if (!row) return null
-          const isActive = activeTab?.rel === row.rel && activeTab?.collectionId === collectionId
-          const isFocused = v.index === focusedIndex
-          const isDirty = dirtyRels.has(row.rel)
-          const isDrop = dropTarget?.rel === row.rel
+    <>
+      <div
+        ref={scrollRef}
+        className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2"
+        onKeyDown={onKeyDown}
+        role="tree"
+        aria-label={t('sidebar.collections')}
+      >
+        <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+          {virtualizer.getVirtualItems().map((v) => {
+            const row = rows[v.index]
+            if (!row) return null
+            const isActive = activeTab?.rel === row.rel && activeTab?.collectionId === collectionId
+            const isFocused = v.index === focusedIndex
+            const isDirty = dirtyRels.has(row.rel)
+            const isDrop = dropTarget?.rel === row.rel
 
-          return (
-            <div
-              key={row.rel}
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                width: '100%',
-                height: v.size,
-                transform: `translateY(${v.start}px)`,
-              }}
-            >
-              <ContextMenu entries={entriesFor(row)}>
-                <div
-                  role="treeitem"
-                  aria-level={row.depth + 1}
-                  aria-posinset={row.posinset}
-                  aria-setsize={row.setsize}
-                  aria-expanded={row.hasChildren ? row.isExpanded : undefined}
-                  aria-selected={isActive}
-                  tabIndex={isFocused ? 0 : -1}
-                  draggable={renaming !== row.rel}
-                  onDragStart={(e) => onDragStart(e, row)}
-                  onDragOver={(e) => onDragOver(e, row)}
-                  onDragLeave={() => setDropTarget((d) => (d?.rel === row.rel ? null : d))}
-                  onDrop={(e) => void onDrop(e, row)}
-                  onClick={() => {
-                    setFocusedIndex(v.index)
-                    openRow(row, true)
-                  }}
-                  onDoubleClick={() => openRow(row, false)}
-                  className={cn(
-                    'flex h-7 w-full cursor-default select-none items-center gap-1.5 rounded-md pr-2 text-sm',
-                    'transition-colors duration-(--dur-fast)',
-                    isActive
-                      ? 'bg-selected text-primary'
-                      : 'text-secondary hover:bg-hover hover:text-primary',
-                    isDrop && dropTarget?.mode === 'into' && 'ring-1 ring-(--accent) bg-accent-soft',
-                    isDrop && dropTarget?.mode === 'after' && 'shadow-[inset_0_-2px_0_var(--accent)]',
-                  )}
-                  style={{ paddingLeft: 6 + row.depth * 14 }}
-                >
-                  {row.kind === 'folder' ? (
-                    <>
-                      <ChevronRight
-                        size={13}
-                        className={cn(
-                          'shrink-0 text-muted transition-transform duration-(--dur-fast)',
-                          row.isExpanded && 'rotate-90',
-                        )}
+            return (
+              <div
+                key={row.rel}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: v.size,
+                  transform: `translateY(${v.start}px)`,
+                }}
+              >
+                <ContextMenu entries={entriesFor(row)}>
+                  <div
+                    role="treeitem"
+                    aria-level={row.depth + 1}
+                    aria-posinset={row.posinset}
+                    aria-setsize={row.setsize}
+                    aria-expanded={row.hasChildren ? row.isExpanded : undefined}
+                    aria-selected={isActive}
+                    tabIndex={isFocused ? 0 : -1}
+                    draggable={renaming !== row.rel}
+                    onDragStart={(e) => onDragStart(e, row)}
+                    onDragOver={(e) => onDragOver(e, row)}
+                    onDragLeave={() => setDropTarget((d) => (d?.rel === row.rel ? null : d))}
+                    onDrop={(e) => void onDrop(e, row)}
+                    onClick={() => {
+                      setFocusedIndex(v.index)
+                      openRow(row, true)
+                    }}
+                    onDoubleClick={() => openRow(row, false)}
+                    className={cn(
+                      'flex h-7 w-full cursor-default select-none items-center gap-1.5 rounded-md pr-2 text-sm',
+                      'transition-colors duration-(--dur-fast)',
+                      isActive
+                        ? 'bg-selected text-primary'
+                        : 'text-secondary hover:bg-hover hover:text-primary',
+                      isDrop && dropTarget?.mode === 'into' && 'ring-1 ring-(--accent) bg-accent-soft',
+                      isDrop && dropTarget?.mode === 'after' && 'shadow-[inset_0_-2px_0_var(--accent)]',
+                    )}
+                    style={{ paddingLeft: 6 + row.depth * 14 }}
+                  >
+                    {row.kind === 'folder' ? (
+                      <>
+                        <ChevronRight
+                          size={13}
+                          className={cn(
+                            'shrink-0 text-muted transition-transform duration-(--dur-fast)',
+                            row.isExpanded && 'rotate-90',
+                          )}
+                        />
+                        <FolderIcon size={13} className="shrink-0 text-muted" />
+                      </>
+                    ) : (
+                      <MethodBadge method={row.method ?? 'GET'} className="ml-4" />
+                    )}
+
+                    {renaming === row.rel ? (
+                      <RenameInput
+                        initial={row.name}
+                        onDone={async (name) => {
+                          setRenaming(null)
+                          if (name && name !== row.name) {
+                            await renameNode(collectionId, row.rel, name, row.kind)
+                          }
+                        }}
                       />
-                      <FolderIcon size={13} className="shrink-0 text-muted" />
-                    </>
-                  ) : (
-                    <MethodBadge method={row.method ?? 'GET'} className="ml-4" />
-                  )}
+                    ) : (
+                      <span className="truncate">{row.name}</span>
+                    )}
 
-                  {renaming === row.rel ? (
-                    <RenameInput
-                      initial={row.name}
-                      onDone={async (name) => {
-                        setRenaming(null)
-                        if (name && name !== row.name) {
-                          await renameNode(collectionId, row.rel, name, row.kind)
-                        }
-                      }}
-                    />
-                  ) : (
-                    <span className="truncate">{row.name}</span>
-                  )}
-
-                  {isDirty ? (
-                    <span
-                      role="status"
-                      className="ml-auto size-1.5 shrink-0 rounded-full bg-(--accent)"
-                      aria-label={t('tabs.unsaved')}
-                    />
-                  ) : null}
-                </div>
-              </ContextMenu>
-            </div>
-          )
-        })}
+                    {isDirty ? (
+                      <span
+                        role="status"
+                        className="ml-auto size-1.5 shrink-0 rounded-full bg-(--accent)"
+                        aria-label={t('tabs.unsaved')}
+                      />
+                    ) : null}
+                  </div>
+                </ContextMenu>
+              </div>
+            )
+          })}
+        </div>
       </div>
-    </div>
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null)
+        }}
+        title={t('sidebar.deleteTitle', { name: pendingDelete?.name ?? '' })}
+        body={pendingDelete?.kind === 'folder' ? t('sidebar.deleteFolderBody') : t('sidebar.deleteBody')}
+        confirmLabel={t('common.delete')}
+        cancelLabel={t('common.cancel')}
+        danger
+        onConfirm={() => {
+          if (pendingDelete) void doDelete(pendingDelete)
+        }}
+      />
+    </>
   )
 }
 

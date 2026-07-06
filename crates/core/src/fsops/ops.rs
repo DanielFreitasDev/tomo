@@ -225,7 +225,10 @@ pub fn duplicate_request(root: &Path, rel: &str) -> Result<String, CoreError> {
     Ok(replace_last_segment(rel, &format!("{slug}.toml")))
 }
 
-pub fn delete_node(root: &Path, rel: &str) -> Result<(), CoreError> {
+/// Resolve and validate a node path for deletion: traversal-guarded (via
+/// `resolve_rel`) and refusing the collection root. Shared by the in-process
+/// hard delete and the app's move-to-OS-trash path.
+pub fn node_path_for_delete(root: &Path, rel: &str) -> Result<PathBuf, CoreError> {
     if rel.trim_matches('/').is_empty() {
         return Err(CoreError::Invalid(
             "cannot delete the collection root".into(),
@@ -237,6 +240,11 @@ pub fn delete_node(root: &Path, rel: &str) -> Result<(), CoreError> {
             "cannot delete the collection root".into(),
         ));
     }
+    Ok(path)
+}
+
+pub fn delete_node(root: &Path, rel: &str) -> Result<(), CoreError> {
+    let path = node_path_for_delete(root, rel)?;
     if path.is_dir() {
         std::fs::remove_dir_all(&path).map_err(|e| CoreError::io(&path, e))
     } else {

@@ -11,7 +11,7 @@ pub use atomic::{atomic_write, read_text};
 pub use gitignore::upsert_gitignore;
 pub use ops::{
     create_collection, create_folder, create_request, delete_node, duplicate_request, move_node,
-    rename_folder, rename_request, reorder_nodes, resolve_rel,
+    node_path_for_delete, rename_folder, rename_request, reorder_nodes, resolve_rel,
 };
 pub use scan::{CollectionTree, FolderNode, InvalidFile, Node, RequestNode, scan_collection};
 pub use slug::{slugify, unique_slug};

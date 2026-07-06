@@ -82,9 +82,12 @@ test('node CRUD: create, rename via F2, delete via context menu', async ({ page 
   await rename.press('Enter')
   await expect(tree.getByText('Ping endpoint')).toBeVisible()
 
-  // delete via context menu
+  // delete via context menu -> confirm dialog (guards accidental deletion)
   await tree.getByText('Ping endpoint').click({ button: 'right' })
   await page.getByRole('menuitem', { name: 'Delete' }).click()
+  const confirm = page.getByRole('alertdialog')
+  await expect(confirm).toBeVisible()
+  await confirm.getByRole('button', { name: 'Delete' }).click()
   await expect(tree.getByText('Ping endpoint')).toBeHidden()
 })
 

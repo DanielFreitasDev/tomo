@@ -334,7 +334,16 @@ pub fn duplicate_request(state: State<'_, AppState>, id: String, rel: String) ->
 #[tauri::command(rename_all = "snake_case")]
 pub fn delete_node(state: State<'_, AppState>, id: String, rel: String) -> ApiResult<()> {
     let runtime = state.collection(&id)?;
-    Ok(fsops::delete_node(&runtime.root, &rel)?)
+    // Move to the OS trash instead of an unrecoverable remove_dir_all: a mis-click
+    // in the tree should be undoable from the system trash, not permanent.
+    let path = fsops::node_path_for_delete(&runtime.root, &rel)?;
+    trash::delete(&path).map_err(|e| {
+        ApiError::new(
+            "io",
+            format!("could not move {} to trash: {e}", path.display()),
+        )
+    })?;
+    Ok(())
 }
 
 #[tauri::command(rename_all = "snake_case")]

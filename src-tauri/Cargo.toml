@@ -30,6 +30,7 @@ indexmap = { workspace = true }
 lru = { workspace = true }
 dunce = { workspace = true }
 blake3 = { workspace = true }
+trash = "5.2.6"
 
 [dev-dependencies]
 tempfile = { workspace = true }
