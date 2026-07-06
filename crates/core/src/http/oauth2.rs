@@ -151,11 +151,55 @@ async fn fetch_token(
         .to_string();
     let expires_at = json
         .get("expires_in")
-        .and_then(|v| v.as_u64())
-        .map(|secs| Instant::now() + Duration::from_secs(secs));
+        .and_then(parse_expires_in_secs)
+        // checked_add guards against a hostile/buggy `expires_in` overflowing Instant.
+        .and_then(|secs| Instant::now().checked_add(Duration::from_secs(secs)));
 
     Ok(CachedToken {
         access_token,
         expires_at,
     })
+}
+
+/// Parse an OAuth2 `expires_in`. Per RFC 6749 it is a number of seconds, but in
+/// the wild it also arrives as a JSON string or a float. Returns whole seconds;
+/// `None` if absent, negative, or unparseable (token then treated as opaque).
+fn parse_expires_in_secs(v: &serde_json::Value) -> Option<u64> {
+    if let Some(n) = v.as_u64() {
+        return Some(n);
+    }
+    if let Some(f) = v.as_f64() {
+        return (f.is_finite() && f >= 0.0).then_some(f as u64);
+    }
+    v.as_str().and_then(|s| s.trim().parse::<u64>().ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_expires_in_secs;
+    use serde_json::json;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn expires_in_accepts_int_string_and_float() {
+        assert_eq!(parse_expires_in_secs(&json!(3600)), Some(3600));
+        assert_eq!(parse_expires_in_secs(&json!("3600")), Some(3600));
+        assert_eq!(parse_expires_in_secs(&json!(3600.9)), Some(3600));
+        assert_eq!(parse_expires_in_secs(&json!("  90 ")), Some(90));
+    }
+
+    #[test]
+    fn expires_in_rejects_garbage_and_negatives() {
+        assert_eq!(parse_expires_in_secs(&json!("soon")), None);
+        assert_eq!(parse_expires_in_secs(&json!(-5)), None);
+        assert_eq!(parse_expires_in_secs(&json!(null)), None);
+    }
+
+    #[test]
+    fn huge_expires_in_does_not_panic() {
+        // u64::MAX used to overflow `Instant + Duration` and panic on a plain 200.
+        let secs = parse_expires_in_secs(&json!(u64::MAX)).unwrap();
+        let at = Instant::now().checked_add(Duration::from_secs(secs));
+        assert!(at.is_none(), "checked_add must yield None, not panic");
+    }
 }

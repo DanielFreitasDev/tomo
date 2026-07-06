@@ -56,51 +56,13 @@ pub async fn capture(
     let mut spill: Option<(std::fs::File, PathBuf)> = None;
     let download_started = Instant::now();
 
-    loop {
-        let chunk = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => {
-                if let Some((_, path)) = &spill { let _ = std::fs::remove_file(path); }
-                return Err(CoreError::Cancelled);
-            }
-            chunk = resp.chunk() => chunk.map_err(|e| CoreError::from_reqwest(e, timeout_ms))?,
-        };
-        let Some(chunk) = chunk else { break };
-
-        body.total_size += chunk.len() as u64;
-
-        // preview buffer up to the cap
-        let room = (cfg.cap_bytes as usize).saturating_sub(body.bytes.len());
-        if room > 0 {
-            body.bytes
-                .extend_from_slice(&chunk[..room.min(chunk.len())]);
+    // Stream the body; on ANY early return (I/O error or cancellation) remove a
+    // partial spill file so it never leaks to disk.
+    if let Err(e) = stream_body(&mut resp, cfg, cancel, &mut body, &mut spill, timeout_ms).await {
+        if let Some((_, path)) = &spill {
+            let _ = std::fs::remove_file(path);
         }
-
-        if body.total_size > cfg.cap_bytes {
-            body.truncated = true;
-            if spill.is_none() {
-                std::fs::create_dir_all(&cfg.spill_dir)
-                    .map_err(|e| CoreError::io(&cfg.spill_dir, e))?;
-                let path = cfg
-                    .spill_dir
-                    .join(format!("tomo-body-{}.bin", uuid::Uuid::new_v4()));
-                let mut file = std::fs::File::create(&path).map_err(|e| CoreError::io(&path, e))?;
-                // backfill what we already buffered
-                file.write_all(&body.bytes)
-                    .map_err(|e| CoreError::io(&path, e))?;
-                spill = Some((file, path));
-            }
-            if let Some((file, path)) = &mut spill {
-                // the preview buffer already holds the head; spill gets everything
-                let already = body.total_size - chunk.len() as u64;
-                let skip = (cfg.cap_bytes).saturating_sub(already) as usize;
-                let skip = skip.min(chunk.len());
-                // bytes below the cap were backfilled above on spill creation;
-                // for later chunks skip == 0 and the whole chunk is written
-                file.write_all(&chunk[skip..])
-                    .map_err(|e| CoreError::io(path.as_path(), e))?;
-            }
-        }
+        return Err(e);
     }
 
     if let Some((file, path)) = spill {
@@ -130,6 +92,63 @@ pub async fn capture(
         script_error: None,
         runtime_sets: indexmap::IndexMap::new(),
     })
+}
+
+/// Stream the response into the preview buffer (up to the cap) and, beyond the
+/// cap, into a spill file. Kept separate so the caller can remove a partial
+/// spill on any error return.
+async fn stream_body(
+    resp: &mut reqwest::Response,
+    cfg: &CaptureConfig,
+    cancel: &CancellationToken,
+    body: &mut BodyCapture,
+    spill: &mut Option<(std::fs::File, PathBuf)>,
+    timeout_ms: u64,
+) -> Result<(), CoreError> {
+    loop {
+        let chunk = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(CoreError::Cancelled),
+            chunk = resp.chunk() => chunk.map_err(|e| CoreError::from_reqwest(e, timeout_ms))?,
+        };
+        let Some(chunk) = chunk else { break };
+
+        body.total_size += chunk.len() as u64;
+
+        // preview buffer up to the cap
+        let room = (cfg.cap_bytes as usize).saturating_sub(body.bytes.len());
+        if room > 0 {
+            body.bytes
+                .extend_from_slice(&chunk[..room.min(chunk.len())]);
+        }
+
+        if body.total_size > cfg.cap_bytes {
+            body.truncated = true;
+            if spill.is_none() {
+                std::fs::create_dir_all(&cfg.spill_dir)
+                    .map_err(|e| CoreError::io(&cfg.spill_dir, e))?;
+                let path = cfg
+                    .spill_dir
+                    .join(format!("tomo-body-{}.bin", uuid::Uuid::new_v4()));
+                let mut file = std::fs::File::create(&path).map_err(|e| CoreError::io(&path, e))?;
+                // backfill what we already buffered
+                file.write_all(&body.bytes)
+                    .map_err(|e| CoreError::io(&path, e))?;
+                *spill = Some((file, path));
+            }
+            if let Some((file, path)) = spill.as_mut() {
+                // the preview buffer already holds the head; spill gets everything
+                let already = body.total_size - chunk.len() as u64;
+                let skip = (cfg.cap_bytes).saturating_sub(already) as usize;
+                let skip = skip.min(chunk.len());
+                // bytes below the cap were backfilled above on spill creation;
+                // for later chunks skip == 0 and the whole chunk is written
+                file.write_all(&chunk[skip..])
+                    .map_err(|e| CoreError::io(path.as_path(), e))?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn parse_content_type(value: &str) -> (Option<String>, Option<String>) {

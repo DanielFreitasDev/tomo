@@ -28,7 +28,17 @@ pub fn build_url(raw: &str, path_params: &[Pair], query: &[Pair]) -> Result<Url,
     if raw.is_empty() {
         return Err(CoreError::Invalid("request URL is empty".into()));
     }
-    let with_scheme = if raw.contains("://") {
+    // Prepend http:// only when there is no *leading* scheme. Checking for
+    // "://" anywhere would misclassify a schemeless URL whose query carries one
+    // (e.g. `api.test/redirect?to=https://x`), so validate the part before the
+    // first "://" is a real scheme: `^[A-Za-z][A-Za-z0-9+.-]*`.
+    let has_scheme = raw.split_once("://").is_some_and(|(scheme, _)| {
+        scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
+    });
+    let with_scheme = if has_scheme {
         raw.to_string()
     } else {
         format!("http://{raw}")
@@ -122,5 +132,15 @@ mod tests {
     #[test]
     fn empty_url_is_an_error() {
         assert!(build_url("  ", &[], &[]).is_err());
+    }
+
+    #[test]
+    fn schemeless_url_with_scheme_in_query_gets_http_prefix() {
+        // The `://` lives in a query value, not a leading scheme, so this must
+        // be treated as schemeless and prefixed (it used to fail to parse).
+        let url = build_url("api.test/redirect?to=https://example.com", &[], &[]).unwrap();
+        assert_eq!(url.scheme(), "http");
+        assert_eq!(url.host_str(), Some("api.test"));
+        assert!(url.query().unwrap().contains("https://example.com"));
     }
 }

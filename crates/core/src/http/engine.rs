@@ -192,7 +192,7 @@ pub async fn execute(cfg: &EngineConfig, spec: RunSpec<'_>) -> Result<ResponseDa
             opts.timeout_ms,
         )
         .await?;
-        headers.push(("Authorization".into(), format!("Bearer {token}")));
+        super::auth::set_authorization(&mut headers, format!("Bearer {token}"));
     }
 
     // ---- request builder --------------------------------------------------
