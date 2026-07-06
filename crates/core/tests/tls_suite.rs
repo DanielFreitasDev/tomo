@@ -2,7 +2,9 @@
 //! and reqwest accepting the resolved identity. `[[tls.client_certs]]` used to
 //! be parsed and then ignored — a silent no-op for anyone configuring mTLS.
 
-use tomo_core::http::{ClientOptions, TomoJar, build_client, resolve_client_identity};
+use tomo_core::http::{
+    ClientCache, ClientOptions, TomoJar, build_client, resolve_client_identity, resolve_extra_cas,
+};
 use tomo_core::model::{ClientCert, Tls};
 
 const CERT_PEM: &str = include_str!("fixtures/client_cert.pem");
@@ -21,6 +23,7 @@ fn collection_with_cert(host: &str) -> (tempfile::TempDir, Tls) {
             cert: "certs/client.pem".into(),
             key: "certs/client.key".into(),
         }],
+        ..Default::default()
     };
     (dir, tls)
 }
@@ -80,6 +83,7 @@ fn cert_paths_are_traversal_guarded() {
             cert: "../../../etc/passwd".into(),
             key: "certs/client.key".into(),
         }],
+        ..Default::default()
     };
     assert!(
         resolve_client_identity(&tls, Some("api.example.com"), dir.path()).is_err(),
@@ -119,4 +123,150 @@ fn a_malformed_identity_pem_is_a_clean_error_not_a_panic() {
         TomoJar::new(),
     );
     assert!(client.is_err());
+}
+
+// ---- extra CA bundles (`[tls] extra_cas`) --------------------------------
+
+/// A collection root carrying a CA bundle at `certs/ca.pem` (the client cert
+/// fixture doubles as a trust anchor) and a `Tls` config that references it.
+fn collection_with_extra_ca() -> (tempfile::TempDir, Tls) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("certs")).unwrap();
+    std::fs::write(dir.path().join("certs/ca.pem"), CERT_PEM).unwrap();
+    let tls = Tls {
+        extra_cas: vec!["certs/ca.pem".into()],
+        ..Default::default()
+    };
+    (dir, tls)
+}
+
+#[test]
+fn resolves_extra_ca_bundles_into_pem_bytes() {
+    let (dir, tls) = collection_with_extra_ca();
+    let cas = resolve_extra_cas(&tls, dir.path()).unwrap();
+    assert_eq!(cas.len(), 1, "one CA bundle configured");
+    let text = String::from_utf8(cas[0].clone()).unwrap();
+    assert!(text.contains("BEGIN CERTIFICATE"), "CA PEM read verbatim");
+}
+
+#[test]
+fn no_extra_cas_configured_yields_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(
+        resolve_extra_cas(&Tls::default(), dir.path())
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn extra_ca_paths_are_traversal_guarded() {
+    let dir = tempfile::tempdir().unwrap();
+    let tls = Tls {
+        extra_cas: vec!["../../../etc/ssl/cert.pem".into()],
+        ..Default::default()
+    };
+    assert!(
+        resolve_extra_cas(&tls, dir.path()).is_err(),
+        "a CA path escaping the collection root must be rejected"
+    );
+}
+
+#[test]
+fn reqwest_trusts_a_resolved_extra_ca() {
+    let (dir, tls) = collection_with_extra_ca();
+    let cas = resolve_extra_cas(&tls, dir.path()).unwrap();
+
+    // build_client succeeding proves rustls parsed the CA bundle and accepted it
+    // as an additional trust anchor on top of the system roots.
+    let client = build_client(
+        &ClientOptions {
+            extra_ca_pems: cas,
+            ..Default::default()
+        },
+        TomoJar::new(),
+    );
+    assert!(client.is_ok(), "reqwest should trust a valid extra CA");
+}
+
+#[test]
+fn a_malformed_extra_ca_pem_is_a_clean_error_not_a_panic() {
+    let client = build_client(
+        &ClientOptions {
+            extra_ca_pems: vec![b"-----BEGIN CERTIFICATE-----\nnot base64\n".to_vec()],
+            ..Default::default()
+        },
+        TomoJar::new(),
+    );
+    assert!(client.is_err());
+}
+
+// ---- client cache (connection reuse) -------------------------------------
+
+#[test]
+fn client_cache_reuses_one_client_for_identical_options() {
+    let cache = ClientCache::new();
+    let opts = ClientOptions::default();
+    cache.get_or_build(&opts, TomoJar::new()).unwrap();
+    cache.get_or_build(&opts, TomoJar::new()).unwrap();
+    assert_eq!(cache.len(), 1, "identical options must hit the cache");
+}
+
+#[test]
+fn client_cache_keys_on_connection_affecting_options() {
+    let cache = ClientCache::new();
+    cache
+        .get_or_build(&ClientOptions::default(), TomoJar::new())
+        .unwrap();
+    cache
+        .get_or_build(
+            &ClientOptions {
+                ssl_verify: false,
+                ..Default::default()
+            },
+            TomoJar::new(),
+        )
+        .unwrap();
+    cache
+        .get_or_build(
+            &ClientOptions {
+                max_redirects: 3,
+                ..Default::default()
+            },
+            TomoJar::new(),
+        )
+        .unwrap();
+    assert_eq!(
+        cache.len(),
+        3,
+        "each distinct option set gets its own client"
+    );
+}
+
+#[test]
+fn client_cache_is_bounded() {
+    let cache = ClientCache::new();
+    for i in 0..12u32 {
+        cache
+            .get_or_build(
+                &ClientOptions {
+                    max_redirects: i,
+                    ..Default::default()
+                },
+                TomoJar::new(),
+            )
+            .unwrap();
+    }
+    assert!(cache.len() <= 8, "cache is bounded, got {}", cache.len());
+}
+
+#[test]
+fn client_cache_clear_drops_everything() {
+    let cache = ClientCache::new();
+    cache
+        .get_or_build(&ClientOptions::default(), TomoJar::new())
+        .unwrap();
+    assert_eq!(cache.len(), 1);
+    cache.clear();
+    assert!(cache.is_empty());
 }

@@ -7,7 +7,7 @@ use indexmap::IndexMap;
 use pretty_assertions::assert_eq;
 use tokio_util::sync::CancellationToken;
 use tomo_core::CoreError;
-use tomo_core::http::{Chain, EngineConfig, RunSpec, TokenCache, TomoJar, execute};
+use tomo_core::http::{Chain, ClientCache, EngineConfig, RunSpec, TokenCache, TomoJar, execute};
 use tomo_core::model::*;
 use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
@@ -50,6 +50,7 @@ async fn run(req: &RequestFile, cache: Arc<TokenCache>) -> Result<ResponseData, 
             collection_root: tmp.path(),
             jar: TomoJar::new(),
             token_cache: cache,
+            client_cache: ClientCache::new(),
             cancel: CancellationToken::new(),
         },
     )
@@ -174,6 +175,7 @@ async fn digest_with_streaming_multipart_is_rejected_clearly() {
             collection_root: tmp.path(),
             jar: TomoJar::new(),
             token_cache: TokenCache::new(),
+            client_cache: ClientCache::new(),
             cancel: CancellationToken::new(),
         },
     )

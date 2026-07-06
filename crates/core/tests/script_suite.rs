@@ -6,8 +6,9 @@ use indexmap::IndexMap;
 use pretty_assertions::assert_eq;
 use tokio_util::sync::CancellationToken;
 use tomo_core::CoreError;
-use tomo_core::http::{Chain, EngineConfig, RunSpec, TokenCache, TomoJar, execute};
+use tomo_core::http::{Chain, ClientCache, EngineConfig, RunSpec, TokenCache, TomoJar, execute};
 use tomo_core::model::*;
+use tomo_core::vars::SECRET_MASK;
 use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -47,6 +48,7 @@ impl Ctx {
                 collection_root: self.tmp.path(),
                 jar: TomoJar::new(),
                 token_cache: TokenCache::new(),
+                client_cache: ClientCache::new(),
                 cancel: CancellationToken::new(),
             },
         )
@@ -186,6 +188,69 @@ async fn post_script_reads_response_and_records_tests_and_console() {
         Some(&serde_json::json!("u-7"))
     );
     assert!(res.script_error.is_none());
+}
+
+/// A user script may legitimately read a secret (to sign a request), but if it
+/// logs one — or the server echoes it — the resolved value must never surface in
+/// the console. The bytes sent on the wire are unaffected.
+#[tokio::test]
+async fn secrets_are_masked_in_the_script_console() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let env_file = EnvironmentFile {
+        meta: EnvMeta {
+            name: "dev".into(),
+            secrets: vec!["api_key".into()],
+        },
+        vars: IndexMap::new(),
+    };
+    let secrets = SecretsFile {
+        collection: IndexMap::from([("api_key".to_string(), "supersecret-abcdef".to_string())]),
+        environments: IndexMap::new(),
+    };
+
+    let mut req = request_to(format!("{}/x", server.uri()));
+    req.scripts.pre_request = Some("console.log('key=' + vars.get('api_key'));".into());
+
+    let ctx = Ctx::new();
+    let config = EngineConfig {
+        network: NetworkSettings::default(),
+        spill_dir: std::env::temp_dir().join("tomo-test-spill"),
+    };
+    let res = execute(
+        &config,
+        RunSpec {
+            chain: Chain {
+                collection: &ctx.collection,
+                folders: vec![],
+                request: &req,
+            },
+            environment: Some(&env_file),
+            secrets: Some(&secrets),
+            runtime_vars: None,
+            process_env: IndexMap::new(),
+            dotenv: IndexMap::new(),
+            collection_root: ctx.tmp.path(),
+            jar: TomoJar::new(),
+            token_cache: TokenCache::new(),
+            client_cache: ClientCache::new(),
+            cancel: CancellationToken::new(),
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(res.console.len(), 1);
+    let msg = &res.console[0].message;
+    assert!(
+        !msg.contains("supersecret-abcdef"),
+        "secret leaked to console: {msg}"
+    );
+    assert!(msg.contains(SECRET_MASK), "secret should be masked: {msg}");
 }
 
 #[tokio::test]

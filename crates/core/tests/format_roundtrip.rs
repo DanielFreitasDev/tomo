@@ -511,11 +511,29 @@ fn collection_snapshot_and_roundtrip() {
                 cert: "certs/client.pem".into(),
                 key: "certs/client-key.pem".into(),
             }],
+            ..Default::default()
         },
     };
     let text = collection_to_string(&col).unwrap();
     insta::assert_snapshot!(text);
     assert_eq!(parse_collection(&text, p()).unwrap(), col);
+}
+
+#[test]
+fn collection_tls_extra_cas_roundtrip() {
+    let mut col = CollectionFile::new("With extra CAs");
+    col.tls.extra_cas = vec!["certs/corp-ca.pem".into(), "certs/dev-ca.pem".into()];
+
+    let text = collection_to_string(&col).unwrap();
+    assert!(
+        text.contains("extra_cas"),
+        "extra_cas must be serialized:\n{text}"
+    );
+    assert_eq!(
+        parse_collection(&text, p()).unwrap(),
+        col,
+        "extra_cas must survive a write→parse round-trip"
+    );
 }
 
 #[test]

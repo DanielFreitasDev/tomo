@@ -167,6 +167,9 @@ pub fn open_collection(
     let root = dunce::canonicalize(&path).unwrap_or_else(|_| PathBuf::from(&path));
     let id = root.to_string_lossy().to_string();
 
+    // `path` comes from the folder-picker dialog (trusted local frontend). The
+    // manifest requirement below is the real guard: an arbitrary directory
+    // without a collection.toml cannot be opened as a collection.
     if !root.join(COLLECTION_FILE).exists() {
         return Err(ApiError::new(
             "not_found",
@@ -561,6 +564,7 @@ pub async fn send_request(
             collection_root: &runtime.root,
             jar: runtime.jar.clone(),
             token_cache: runtime.token_cache.clone(),
+            client_cache: runtime.client_cache.clone(),
             cancel: token,
         },
     )
@@ -625,6 +629,30 @@ fn response_body_preview(data: &ResponseData) -> Vec<u8> {
     data.body.bytes.clone()
 }
 
+/// Validate a user-facing save destination.
+///
+/// Threat model: Tomo is a local desktop app whose own (trusted) frontend is the
+/// only IPC caller. A save destination always originates from the OS save dialog
+/// (`pick_save_file`), which returns an absolute path the user explicitly picked.
+/// We still reject empty and relative destinations defensively, so a malformed
+/// request can never write somewhere surprising (e.g. relative to the process
+/// CWD). This command deliberately writes outside the collection root — that is
+/// the whole point of "save response to disk" — so it is not traversal-guarded.
+fn validated_save_dest(dest: &str) -> ApiResult<PathBuf> {
+    let dest = dest.trim();
+    if dest.is_empty() {
+        return Err(ApiError::new("invalid", "empty save destination"));
+    }
+    let path = PathBuf::from(dest);
+    if !path.is_absolute() {
+        return Err(ApiError::new(
+            "invalid",
+            "save destination must be an absolute path chosen from the file dialog",
+        ));
+    }
+    Ok(path)
+}
+
 fn save_response_body_data(data: &ResponseData, dest: &Path) -> ApiResult<()> {
     if let Some(spill) = &data.body.spill_path {
         std::fs::copy(spill, dest)
@@ -661,7 +689,7 @@ pub fn save_response_body(
         .ok()
         .and_then(|cache| cache.peek(&run_id).cloned())
         .ok_or_else(|| ApiError::new("not_found", "response body no longer cached"))?;
-    let dest = PathBuf::from(dest);
+    let dest = validated_save_dest(&dest)?;
     save_response_body_data(&data, &dest)
 }
 
@@ -822,10 +850,12 @@ pub fn save_ui_state(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::{
         ENVIRONMENTS_DIR, SECRETS_FILE, env_file_path, load_optional_secrets,
         load_selected_environment, read_existing_for_save, response_body_preview,
-        save_response_body_data,
+        save_response_body_data, validated_save_dest,
     };
     use tomo_core::model::{BodyCapture, ResponseData, Timing};
 
@@ -889,6 +919,22 @@ mod tests {
         save_response_body_data(&data, &dest).unwrap();
 
         assert_eq!(std::fs::read(dest).unwrap(), b"complete");
+    }
+
+    #[test]
+    fn validated_save_dest_requires_an_absolute_nonempty_path() {
+        assert!(validated_save_dest("").is_err(), "empty dest rejected");
+        assert!(validated_save_dest("   ").is_err(), "blank dest rejected");
+        assert!(
+            validated_save_dest("relative/out.bin").is_err(),
+            "relative dest rejected"
+        );
+        let abs = if cfg!(windows) {
+            r"C:\Users\me\out.bin"
+        } else {
+            "/home/me/out.bin"
+        };
+        assert_eq!(validated_save_dest(abs).unwrap(), PathBuf::from(abs));
     }
 
     #[test]

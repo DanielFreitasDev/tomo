@@ -3,7 +3,10 @@
 use indexmap::IndexMap;
 use pretty_assertions::assert_eq;
 use tomo_core::model::{EnvMeta, EnvironmentFile, SecretsFile, VarValue};
-use tomo_core::vars::{Scope, StackInputs, VarStack, Warning, interpolate};
+use tomo_core::vars::{
+    SECRET_MASK, Scope, StackInputs, VarStack, Warning, interpolate, interpolate_masked,
+    mask_secrets,
+};
 
 fn vars(pairs: &[(&str, serde_json::Value)]) -> IndexMap<String, VarValue> {
     pairs
@@ -348,6 +351,83 @@ fn secrets_resolution_order_and_missing_warning() {
     assert_eq!(stack.missing_secrets, vec!["nowhere".to_string()]);
     assert!(stack.secret_names.contains("from_env_secrets"));
     assert_eq!(stack.secret_names.len(), 5);
+}
+
+// ---- secret masking on display surfaces ----------------------------------
+
+#[test]
+fn secret_values_are_longest_first_and_skip_trivially_short() {
+    let env_file = EnvironmentFile {
+        meta: EnvMeta {
+            name: "dev".into(),
+            secrets: vec!["token".into(), "pin".into(), "api_key".into()],
+        },
+        vars: IndexMap::new(),
+    };
+    let secrets = SecretsFile {
+        collection: svars(&[
+            ("token", "supersecret-token-value"),
+            ("pin", "99"), // under the min mask length -> skipped
+            ("api_key", "abcd1234"),
+        ]),
+        environments: IndexMap::new(),
+    };
+    let stack = VarStack::build(StackInputs {
+        environment: Some(&env_file),
+        secrets: Some(&secrets),
+        ..Default::default()
+    });
+
+    assert_eq!(
+        stack.secret_values(),
+        vec![
+            "supersecret-token-value".to_string(),
+            "abcd1234".to_string(),
+        ],
+        "resolved secret values, longest-first, short ones dropped"
+    );
+}
+
+#[test]
+fn mask_secrets_redacts_every_occurrence() {
+    let secrets = vec!["abcd1234".to_string()];
+    let masked = mask_secrets("Bearer abcd1234 then echo abcd1234", &secrets);
+    assert!(!masked.contains("abcd1234"), "no secret left: {masked}");
+    assert_eq!(
+        masked,
+        format!("Bearer {SECRET_MASK} then echo {SECRET_MASK}")
+    );
+}
+
+#[test]
+fn interpolate_masked_hides_secrets_but_keeps_plain_vars() {
+    let env_file = EnvironmentFile {
+        meta: EnvMeta {
+            name: "dev".into(),
+            secrets: vec!["api_key".into()],
+        },
+        vars: IndexMap::from([("host".to_string(), VarValue::String("api.test".into()))]),
+    };
+    let secrets = SecretsFile {
+        collection: svars(&[("api_key", "abcd1234secret")]),
+        environments: IndexMap::new(),
+    };
+    let stack = VarStack::build(StackInputs {
+        environment: Some(&env_file),
+        secrets: Some(&secrets),
+        ..Default::default()
+    });
+
+    // real interpolation still resolves the secret — that's what goes on the wire
+    assert_eq!(
+        interpolate("{{host}}:{{api_key}}", &stack).text,
+        "api.test:abcd1234secret"
+    );
+    // masked interpolation redacts the secret, keeps the ordinary variable
+    assert_eq!(
+        interpolate_masked("{{host}}:{{api_key}}", &stack).text,
+        format!("api.test:{SECRET_MASK}")
+    );
 }
 
 #[test]

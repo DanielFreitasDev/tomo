@@ -98,6 +98,26 @@ impl VarStack {
         stack
     }
 
+    /// Resolved string values of every secret-named variable — the strings a
+    /// display surface must redact (see [`crate::vars::mask_secrets`]). Sorted
+    /// longest-first so a secret that contains another is masked whole first.
+    /// Values shorter than 4 chars are skipped: masking them would redact
+    /// unrelated text (a secret of `"1"` would eat every `1`).
+    pub fn secret_values(&self) -> Vec<String> {
+        const MIN_MASK_LEN: usize = 4;
+        let mut seen: HashSet<String> = HashSet::new();
+        for name in &self.secret_names {
+            if let Some((VarValue::String(s), _)) = self.resolve(name)
+                && s.len() >= MIN_MASK_LEN
+            {
+                seen.insert(s.clone());
+            }
+        }
+        let mut out: Vec<String> = seen.into_iter().collect();
+        out.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+        out
+    }
+
     /// Look up a plain name (no dot path), highest precedence first.
     pub fn resolve(&self, name: &str) -> Option<(&VarValue, Scope)> {
         self.layers

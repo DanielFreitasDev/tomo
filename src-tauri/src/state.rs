@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use dashmap::DashMap;
 use lru::LruCache;
 use tokio_util::sync::CancellationToken;
-use tomo_core::http::{TokenCache, TomoJar};
+use tomo_core::http::{ClientCache, TokenCache, TomoJar};
 use tomo_core::model::ResponseData;
 use tomo_core::watch::{Watcher, WriteSuppressor};
 
@@ -19,6 +19,9 @@ pub struct CollectionRuntime {
     pub root: PathBuf,
     pub jar: Arc<TomoJar>,
     pub token_cache: Arc<TokenCache>,
+    /// Reqwest clients pooled for connection reuse (keep-alive / HTTP2) across
+    /// this collection's requests.
+    pub client_cache: Arc<ClientCache>,
     pub runtime_vars: Mutex<indexmap::IndexMap<String, serde_json::Value>>,
     pub suppressor: Arc<WriteSuppressor>,
     pub selected_env: Mutex<Option<String>>,
@@ -32,6 +35,7 @@ impl CollectionRuntime {
             root,
             jar: TomoJar::new(),
             token_cache: TokenCache::new(),
+            client_cache: ClientCache::new(),
             runtime_vars: Mutex::new(indexmap::IndexMap::new()),
             suppressor: WriteSuppressor::new(),
             selected_env: Mutex::new(None),

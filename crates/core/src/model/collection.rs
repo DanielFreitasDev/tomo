@@ -68,11 +68,16 @@ impl Defaults {
 pub struct Tls {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub client_certs: Vec<ClientCert>,
+    /// Extra CA certificate bundles (PEM) to trust *in addition* to the system
+    /// roots — for self-signed / private-CA servers without disabling
+    /// verification wholesale. Paths are relative to the collection root.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_cas: Vec<String>,
 }
 
 impl Tls {
     pub fn is_empty(&self) -> bool {
-        self.client_certs.is_empty()
+        self.client_certs.is_empty() && self.extra_cas.is_empty()
     }
 }
 

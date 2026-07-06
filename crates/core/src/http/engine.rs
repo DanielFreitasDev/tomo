@@ -25,7 +25,7 @@ use crate::vars::{Interpolated, StackInputs, VarStack, Warning, interpolate};
 use super::auth::apply_simple_auth;
 use super::build::build_url;
 use super::capture::{CaptureConfig, capture};
-use super::client::{ClientOptions, build_client, resolve_client_identity};
+use super::client::{ClientCache, ClientOptions, resolve_client_identity, resolve_extra_cas};
 use super::cookies::TomoJar;
 use super::digest::send_with_digest;
 use super::oauth2::{TokenCache, get_token};
@@ -46,6 +46,8 @@ pub struct RunSpec<'a> {
     pub collection_root: &'a Path,
     pub jar: Arc<TomoJar>,
     pub token_cache: Arc<TokenCache>,
+    /// Per-collection pool of reqwest clients for connection reuse across sends.
+    pub client_cache: Arc<ClientCache>,
     pub cancel: CancellationToken,
 }
 
@@ -172,19 +174,22 @@ pub async fn execute(cfg: &EngineConfig, spec: RunSpec<'_>) -> Result<ResponseDa
         ssl_verify: request.options.ssl_verify.unwrap_or(cfg.network.ssl_verify),
     };
 
-    // mTLS: present the collection's client certificate for this host, if any.
+    // mTLS: present the collection's client certificate for this host, if any,
+    // and trust any collection-configured extra CA bundles.
     let client_identity_pem = resolve_client_identity(
         &spec.chain.collection.tls,
         url.host_str(),
         spec.collection_root,
     )?;
-    let client = build_client(
+    let extra_ca_pems = resolve_extra_cas(&spec.chain.collection.tls, spec.collection_root)?;
+    let client = spec.client_cache.get_or_build(
         &ClientOptions {
             follow_redirects: opts.follow_redirects,
             max_redirects: opts.max_redirects,
             ssl_verify: opts.ssl_verify,
             proxy: cfg.network.proxy.clone(),
             client_identity_pem,
+            extra_ca_pems,
         },
         spec.jar.clone(),
     )?;
@@ -349,6 +354,19 @@ pub async fn execute(cfg: &EngineConfig, spec: RunSpec<'_>) -> Result<ResponseDa
                 }
             }
             Err(e) => data.script_error = Some(e.to_string()),
+        }
+    }
+
+    // Redact resolved secrets from display surfaces: a script may log or echo a
+    // secret value (or the server may echo it back), but it must never surface
+    // in the console or a script error. The bytes already sent are untouched.
+    let secret_values = stack.secret_values();
+    if !secret_values.is_empty() {
+        for line in &mut console {
+            line.message = crate::vars::mask_secrets(&line.message, &secret_values);
+        }
+        if let Some(err) = &mut data.script_error {
+            *err = crate::vars::mask_secrets(err, &secret_values);
         }
     }
 

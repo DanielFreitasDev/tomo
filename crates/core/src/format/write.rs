@@ -175,17 +175,25 @@ fn collection_document(c: &CollectionFile) -> Result<DocumentMut, CoreError> {
         root.insert("scripts", Item::Table(scripts_table(&c.scripts)));
     }
     if !c.tls.is_empty() {
-        let mut aot = ArrayOfTables::new();
-        for cert in &c.tls.client_certs {
-            let mut t = Table::new();
-            t.insert("host", value(cert.host.as_str()));
-            t.insert("cert", value(cert.cert.as_str()));
-            t.insert("key", value(cert.key.as_str()));
-            aot.push(t);
-        }
         let mut tls = Table::new();
         tls.set_implicit(true);
-        tls.insert("client_certs", Item::ArrayOfTables(aot));
+        // Leaf `extra_cas` must precede the `[[tls.client_certs]]` sub-tables:
+        // a `[tls]` header emitted *after* them would redefine the table.
+        if !c.tls.extra_cas.is_empty() {
+            let arr: toml_edit::Array = c.tls.extra_cas.iter().map(|s| s.as_str()).collect();
+            tls.insert("extra_cas", value(arr));
+        }
+        if !c.tls.client_certs.is_empty() {
+            let mut aot = ArrayOfTables::new();
+            for cert in &c.tls.client_certs {
+                let mut t = Table::new();
+                t.insert("host", value(cert.host.as_str()));
+                t.insert("cert", value(cert.cert.as_str()));
+                t.insert("key", value(cert.key.as_str()));
+                aot.push(t);
+            }
+            tls.insert("client_certs", Item::ArrayOfTables(aot));
+        }
         root.insert("tls", Item::Table(tls));
     }
 
