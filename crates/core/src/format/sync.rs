@@ -82,9 +82,7 @@ pub fn sync_request(text: &str, req: &RequestFile, path: &Path) -> Result<String
     sync_auth(root, &cur.auth, &req.auth);
     if cur.body != req.body {
         match &req.body {
-            Some(b) => {
-                root.insert("body", Item::Table(reprefix(body_table(b), root, "body")));
-            }
+            Some(b) => merge_table_in_place(root, "body", body_table(b)),
             None => {
                 root.remove("body");
             }
@@ -150,7 +148,7 @@ pub fn sync_request(text: &str, req: &RequestFile, path: &Path) -> Result<String
         }
     }
 
-    Ok(doc.to_string())
+    Ok(finish(text, &doc))
 }
 
 pub fn sync_collection(text: &str, c: &CollectionFile, path: &Path) -> Result<String, CoreError> {
@@ -197,7 +195,7 @@ pub fn sync_collection(text: &str, c: &CollectionFile, path: &Path) -> Result<St
         }
     }
 
-    Ok(doc.to_string())
+    Ok(finish(text, &doc))
 }
 
 pub fn sync_folder(text: &str, f: &FolderFile, path: &Path) -> Result<String, CoreError> {
@@ -224,7 +222,7 @@ pub fn sync_folder(text: &str, f: &FolderFile, path: &Path) -> Result<String, Co
     sync_vars_table(root, "vars", &cur.vars, &f.vars)?;
     sync_scripts(root, &cur.scripts, &f.scripts);
 
-    Ok(doc.to_string())
+    Ok(finish(text, &doc))
 }
 
 pub fn sync_environment(text: &str, e: &EnvironmentFile, path: &Path) -> Result<String, CoreError> {
@@ -252,12 +250,28 @@ pub fn sync_environment(text: &str, e: &EnvironmentFile, path: &Path) -> Result<
     }
     sync_vars_table(root, "vars", &cur.vars, &e.vars)?;
 
-    Ok(doc.to_string())
+    Ok(finish(text, &doc))
 }
 
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
+
+/// Serialize `doc`, restoring the original file's newline style. toml_edit's
+/// DocumentMut normalizes CRLF to LF on parse, which would rewrite every line
+/// of a Windows/CRLF file on a no-op save; converting back keeps the save
+/// byte-identical (the git-friendly promise) regardless of platform.
+fn finish(original: &str, doc: &DocumentMut) -> String {
+    let out = doc.to_string();
+    if original.contains("\r\n") {
+        // toml_edit may keep CRLF inside string values but normalize structural
+        // newlines to LF, so `out` can be mixed. Collapse to LF, then convert
+        // uniformly to CRLF to match the original file byte-for-byte.
+        out.replace("\r\n", "\n").replace('\n', "\r\n")
+    } else {
+        out
+    }
+}
 
 fn parse_doc(text: &str, path: &Path) -> Result<DocumentMut, CoreError> {
     text.parse::<DocumentMut>()
@@ -312,6 +326,39 @@ fn sync_opt(t: &mut Table, key: &str, new: Option<Value>) {
     }
 }
 
+/// Surgically merge a freshly built section table into the existing `[name]`
+/// table: update/insert each key in place (preserving decor — i.e. the user's
+/// inline comments — on keys that already exist) and drop keys that are no
+/// longer present. Only when the section doesn't exist yet is it inserted
+/// wholesale. This keeps comments on unchanged fields when one field of
+/// `[auth]`/`[body]` changes, instead of rebuilding the whole block.
+fn merge_table_in_place(root: &mut Table, name: &str, built: Table) {
+    if root.get(name).is_none_or(|i| i.as_table().is_none()) {
+        root.insert(name, Item::Table(reprefix(built, root, name)));
+        return;
+    }
+    let existing = root
+        .get_mut(name)
+        .and_then(Item::as_table_mut)
+        .expect("table exists");
+    let stale: Vec<String> = existing
+        .iter()
+        .map(|(k, _)| k.to_string())
+        .filter(|k| built.get(k).is_none())
+        .collect();
+    for k in stale {
+        existing.remove(&k);
+    }
+    for (k, item) in built.iter() {
+        match item.as_value() {
+            Some(v) => set_scalar(existing, k, v.clone()),
+            None => {
+                existing.insert(k, item.clone());
+            }
+        }
+    }
+}
+
 /// Element-wise sync of a `key = [ {..}, {..} ]` array.
 /// Same length → only changed items are replaced (their line decor kept);
 /// different length → the whole array is rebuilt in canonical style.
@@ -356,9 +403,7 @@ fn sync_auth(root: &mut Table, old: &Option<Auth>, new: &Option<Auth>) {
         return;
     }
     match new {
-        Some(a) => {
-            root.insert("auth", Item::Table(reprefix(auth_table(a), root, "auth")));
-        }
+        Some(a) => merge_table_in_place(root, "auth", auth_table(a)),
         None => {
             root.remove("auth");
         }

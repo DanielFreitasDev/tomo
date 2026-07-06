@@ -259,6 +259,51 @@ fn noop_sync_is_byte_identical() {
 }
 
 #[test]
+fn crlf_noop_sync_preserves_line_endings() {
+    // A Windows/CRLF file must survive a no-op save byte-for-byte, or every
+    // line shows as changed in git the first time it's saved.
+    let crlf = HAND_WRITTEN.replace('\n', "\r\n");
+    let parsed = parse_request(&crlf, p()).unwrap();
+    let out = sync_request(&crlf, &parsed, p()).unwrap();
+    assert_eq!(out, crlf);
+    assert!(out.contains("\r\n"));
+}
+
+#[test]
+fn auth_field_edit_keeps_sibling_comment() {
+    let src = "[meta]\nname = \"R\"\nseq = 1\n\n[http]\nmethod = \"GET\"\nurl = \"https://api.test/x\"\n\n[auth]\ntype = \"basic\"\nusername = \"ops\" # ops account\npassword = \"old\"\n";
+    let mut parsed = parse_request(src, p()).unwrap();
+    if let Some(Auth::Basic { password, .. }) = parsed.auth.as_mut() {
+        *password = "new".into();
+    } else {
+        panic!("expected basic auth");
+    }
+    let out = sync_request(src, &parsed, p()).unwrap();
+    assert!(
+        out.contains("# ops account"),
+        "sibling comment on the untouched username survives:\n{out}"
+    );
+    assert!(out.contains(r#"password = "new""#));
+    assert_eq!(parse_request(&out, p()).unwrap(), parsed);
+}
+
+#[test]
+fn body_content_edit_keeps_type_comment() {
+    let src = "[meta]\nname = \"R\"\nseq = 1\n\n[http]\nmethod = \"POST\"\nurl = \"https://api.test/x\"\n\n[body]\ntype = \"json\" # always json\ncontent = '''\n{ \"a\": 1 }\n'''\n";
+    let mut parsed = parse_request(src, p()).unwrap();
+    parsed.body = Some(Body::Json {
+        content: "{ \"a\": 2 }\n".into(),
+    });
+    let out = sync_request(src, &parsed, p()).unwrap();
+    assert!(
+        out.contains("# always json"),
+        "type comment survives a content edit:\n{out}"
+    );
+    assert!(out.contains("\"a\": 2"));
+    assert_eq!(parse_request(&out, p()).unwrap(), parsed);
+}
+
+#[test]
 fn url_change_touches_exactly_one_line() {
     let mut parsed = parse_request(HAND_WRITTEN, p()).unwrap();
     parsed.http.url = "https://api.acme.test/v2/users".into();

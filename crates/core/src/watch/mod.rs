@@ -56,6 +56,16 @@ pub fn content_hash(bytes: &[u8]) -> String {
     blake3::hash(bytes).to_hex().to_string()
 }
 
+/// True if `path` currently holds content matching a recently-registered
+/// app-side write — i.e. an atomic save landing as a create/rename that the
+/// watcher must not echo back as an external change.
+fn is_self_write(suppressor: &WriteSuppressor, path: &Path) -> bool {
+    match std::fs::read(path) {
+        Ok(bytes) => suppressor.should_suppress(path, &content_hash(&bytes)),
+        Err(_) => false,
+    }
+}
+
 /// Keep this alive for as long as the collection is open; dropping stops the watch.
 pub struct Watcher {
     _debouncer: notify_debouncer_full::Debouncer<
@@ -90,8 +100,21 @@ pub fn watch_collection(
                 continue;
             }
             match event.kind {
-                EventKind::Create(_) | EventKind::Remove(_) => tree_changed = true,
-                EventKind::Modify(notify::event::ModifyKind::Name(_)) => tree_changed = true,
+                EventKind::Create(_)
+                | EventKind::Remove(_)
+                | EventKind::Modify(notify::event::ModifyKind::Name(_)) => {
+                    // A structural change. Our own atomic saves land as a rename
+                    // (create/remove of the target), so a tree rescan must fire
+                    // only when at least one path is NOT a suppressed self-write
+                    // — otherwise every app save echoes back as an external
+                    // change and forces a redundant (racy) rescan.
+                    if relevant
+                        .iter()
+                        .any(|p| !is_self_write(&suppressor, p.as_path()))
+                    {
+                        tree_changed = true;
+                    }
+                }
                 EventKind::Modify(_) => {
                     for p in relevant {
                         if p.is_file() {
@@ -182,6 +205,25 @@ mod tests {
         assert!(
             !s.should_suppress(Path::new("/tmp/y.toml"), &hello),
             "different path is external"
+        );
+    }
+
+    #[test]
+    fn self_write_recognizes_own_atomic_save_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.toml");
+        std::fs::write(&path, "hello = 1\n").unwrap();
+        let s = WriteSuppressor::new();
+        assert!(!is_self_write(&s, &path), "unregistered write is external");
+        s.register(&path, "hello = 1\n");
+        assert!(
+            is_self_write(&s, &path),
+            "registered identical content is self"
+        );
+        std::fs::write(&path, "hello = 2\n").unwrap();
+        assert!(
+            !is_self_write(&s, &path),
+            "content changed after register is external"
         );
     }
 
