@@ -12,7 +12,7 @@ pub mod oauth2;
 pub mod resolve;
 
 pub use build::build_url;
-pub use client::{ClientOptions, build_client};
+pub use client::{ClientOptions, build_client, resolve_client_identity};
 pub use cookies::{CookieDto, TomoJar};
 pub use engine::{EngineConfig, RunSpec, execute};
 pub use oauth2::TokenCache;

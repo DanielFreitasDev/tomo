@@ -25,7 +25,7 @@ use crate::vars::{Interpolated, StackInputs, VarStack, Warning, interpolate};
 use super::auth::apply_simple_auth;
 use super::build::build_url;
 use super::capture::{CaptureConfig, capture};
-use super::client::{ClientOptions, build_client};
+use super::client::{ClientOptions, build_client, resolve_client_identity};
 use super::cookies::TomoJar;
 use super::digest::send_with_digest;
 use super::oauth2::{TokenCache, get_token};
@@ -172,12 +172,19 @@ pub async fn execute(cfg: &EngineConfig, spec: RunSpec<'_>) -> Result<ResponseDa
         ssl_verify: request.options.ssl_verify.unwrap_or(cfg.network.ssl_verify),
     };
 
+    // mTLS: present the collection's client certificate for this host, if any.
+    let client_identity_pem = resolve_client_identity(
+        &spec.chain.collection.tls,
+        url.host_str(),
+        spec.collection_root,
+    )?;
     let client = build_client(
         &ClientOptions {
             follow_redirects: opts.follow_redirects,
             max_redirects: opts.max_redirects,
             ssl_verify: opts.ssl_verify,
             proxy: cfg.network.proxy.clone(),
+            client_identity_pem,
         },
         spec.jar.clone(),
     )?;
