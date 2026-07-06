@@ -22,6 +22,8 @@ export interface Tab {
   /** Hash of the disk text this tab's content is based on. */
   baseHash: string
   conflict: Conflict
+  /** Disk hash that triggered the current conflict (rebase target for keep-mine). */
+  conflictHash?: string
   preview: boolean
   activeSubTab: SubTab
 }
@@ -44,7 +46,7 @@ interface TabsState {
   promote: (id: string) => void
   setDraft: (id: string, draft: RequestFileDto | null) => void
   setBase: (id: string, hash: string) => void
-  setConflict: (id: string, conflict: Conflict) => void
+  setConflict: (id: string, conflict: Conflict, hash?: string) => void
   setSubTab: (id: string, sub: SubTab) => void
   retitle: (id: string, title: string, method: string) => void
   rekey: (collectionId: string, fromRel: string, toRel: string) => void
@@ -125,8 +127,14 @@ export const useTabs = create<TabsState>((set, get) => ({
     set((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, baseHash: hash } : t)) }))
   },
 
-  setConflict(id, conflict) {
-    set((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, conflict } : t)) }))
+  setConflict(id, conflict, hash) {
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === id
+          ? { ...t, conflict, conflictHash: conflict === 'none' ? undefined : (hash ?? t.conflictHash) }
+          : t,
+      ),
+    }))
   },
 
   setSubTab(id, sub) {

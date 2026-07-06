@@ -57,8 +57,25 @@ export async function renameNode(
     useCollections.getState().moveRequestKey(id, rel, newRel)
     useTabs.getState().rekey(id, rel, newRel)
   }
-  const tab = useTabs.getState().findByRel(id, newRel)
-  if (tab && kind === 'request') useTabs.getState().retitle(tab.id, newName, tab.method)
+  if (kind === 'request') {
+    // The backend rewrote meta.name INSIDE the file, so the in-memory mirror is
+    // now stale (old name, old hash). Re-read it, or the first edit clones the
+    // stale mirror and the next save silently reverts the rename.
+    try {
+      const { request, hash } = await transport().invoke('read_request', { id, rel: newRel })
+      useCollections.getState().setRequest(id, newRel, request, hash)
+      const tab = useTabs.getState().findByRel(id, newRel)
+      if (tab) {
+        useTabs.getState().setBase(tab.id, hash)
+        // don't clobber a dirty draft's in-progress title
+        if (tab.draft === null) useTabs.getState().retitle(tab.id, request.meta.name, request.http.method)
+      }
+    } catch {
+      // fall back to the optimistic title if the re-read fails
+      const tab = useTabs.getState().findByRel(id, newRel)
+      if (tab) useTabs.getState().retitle(tab.id, newName, tab.method)
+    }
+  }
   return newRel
 }
 

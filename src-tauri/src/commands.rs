@@ -245,6 +245,21 @@ pub fn read_request(
     })
 }
 
+/// Read the on-disk text for a save. A missing file is a legitimate "save as
+/// new" (`Ok(None)`). Any OTHER read error — permission, invalid UTF-8 from a
+/// hand edit, a transient lock — is a hard error, never silently treated as an
+/// empty file (which used to skip the conflict check and clobber disk).
+fn read_existing_for_save(path: &Path) -> ApiResult<Option<String>> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(ApiError::new(
+            "io",
+            format!("cannot read {} to save it safely: {e}", path.display()),
+        )),
+    }
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub fn save_request(
     state: State<'_, AppState>,
@@ -257,24 +272,24 @@ pub fn save_request(
     let req: RequestFile = from_value(request)?;
     let path = resolve_rel(&runtime.root, &rel)?;
 
-    let current_text = read_text(&path).unwrap_or_default();
-    let current_hash = content_hash(current_text.as_bytes());
+    let existing = read_existing_for_save(&path)?;
 
-    if let Some(base) = &base_hash
-        && !current_text.is_empty()
-        && base != &current_hash
-    {
-        return Ok(SaveResultDto::Conflict {
-            current_text,
-            current_hash,
-        });
+    if let (Some(base), Some(text)) = (&base_hash, &existing) {
+        let current_hash = content_hash(text.as_bytes());
+        // Covers external truncation too: an existing-but-empty file whose hash
+        // no longer matches the tab's base is a conflict, not a silent overwrite.
+        if base != &current_hash {
+            return Ok(SaveResultDto::Conflict {
+                current_text: text.clone(),
+                current_hash,
+            });
+        }
     }
 
-    // surgical edit if the file exists, canonical write otherwise
-    let out = if current_text.is_empty() {
-        request_to_string(&req)?
-    } else {
-        sync_request(&current_text, &req, &path)?
+    // surgical edit if the file exists with content, canonical write otherwise
+    let out = match &existing {
+        Some(text) if !text.is_empty() => sync_request(text, &req, &path)?,
+        _ => request_to_string(&req)?,
     };
     register_write(&runtime, &rel, &out);
     atomic_write(&path, &out)?;
@@ -772,8 +787,31 @@ pub fn save_ui_state(
 
 #[cfg(test)]
 mod tests {
-    use super::{env_file_path, response_body_preview, save_response_body_data};
+    use super::{
+        env_file_path, read_existing_for_save, response_body_preview, save_response_body_data,
+    };
     use tomo_core::model::{BodyCapture, ResponseData, Timing};
+
+    #[test]
+    fn read_existing_for_save_distinguishes_missing_from_unreadable() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // missing file -> save-as-new, not an error
+        let missing = dir.path().join("nope.toml");
+        assert_eq!(read_existing_for_save(&missing).unwrap(), None);
+
+        // present file -> its content
+        let file = dir.path().join("r.toml");
+        std::fs::write(&file, "name = \"x\"\n").unwrap();
+        assert_eq!(
+            read_existing_for_save(&file).unwrap().as_deref(),
+            Some("name = \"x\"\n")
+        );
+
+        // unreadable (a directory stands in for any non-NotFound error) must be
+        // an error, never silently "empty" — that used to clobber disk.
+        assert!(read_existing_for_save(dir.path()).is_err());
+    }
 
     fn response(bytes: Vec<u8>, total_size: u64, truncated: bool) -> ResponseData {
         ResponseData {

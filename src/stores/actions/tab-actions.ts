@@ -54,26 +54,33 @@ export function editTab(tabId: string, mutate: (draft: RequestFileDto) => Reques
 export type SaveOutcome = 'saved' | 'conflict' | 'noop'
 
 export async function saveTab(tabId: string): Promise<SaveOutcome> {
-  const tabs = useTabs.getState()
-  const tab = tabs.byId(tabId)
+  const tab = useTabs.getState().byId(tabId)
   if (!tab?.draft) return 'noop'
+  const snapshot = tab.draft
 
   const result = await transport().invoke('save_request', {
     id: tab.collectionId,
     rel: tab.rel,
-    request: tab.draft,
+    request: snapshot,
     base_hash: tab.baseHash,
   })
 
   if (result.outcome === 'conflict') {
-    tabs.setConflict(tabId, 'disk-changed')
+    useTabs.getState().setConflict(tabId, 'disk-changed', result.current_hash)
     return 'conflict'
   }
 
-  useCollections.getState().setRequest(tab.collectionId, tab.rel, tab.draft, result.hash ?? '')
-  tabs.setDraft(tabId, null)
-  tabs.setBase(tabId, result.hash ?? '')
-  tabs.setConflict(tabId, 'none')
+  const hash = result.hash ?? ''
+  // the mirror now reflects exactly what we wrote
+  useCollections.getState().setRequest(tab.collectionId, tab.rel, snapshot, hash)
+  useTabs.getState().setBase(tabId, hash)
+  useTabs.getState().setConflict(tabId, 'none')
+  // only clear the draft if nothing was typed during the (possibly slow) await;
+  // otherwise the newer keystrokes stay dirty instead of being discarded
+  const latest = useTabs.getState().byId(tabId)
+  if (latest?.draft && JSON.stringify(latest.draft) === JSON.stringify(snapshot)) {
+    useTabs.getState().setDraft(tabId, null)
+  }
   return 'saved'
 }
 
@@ -105,9 +112,13 @@ export function keepMyChanges(tabId: string): void {
   const tabs = useTabs.getState()
   const tab = tabs.byId(tabId)
   if (!tab) return
-  // rebase onto current disk hash so the next save wins
-  const mirror = useCollections.getState().requests[requestKey(tab.collectionId, tab.rel)]
-  if (mirror) tabs.setBase(tabId, mirror.hash)
+  // Rebase onto the disk hash that actually triggered the conflict so the next
+  // save wins. Falling back to the mirror hash (which can be stale when the
+  // conflict came from a save, not a watcher event) caused an endless
+  // conflict → keep-mine → conflict loop.
+  const diskHash =
+    tab.conflictHash ?? useCollections.getState().requests[requestKey(tab.collectionId, tab.rel)]?.hash
+  if (diskHash) tabs.setBase(tabId, diskHash)
   tabs.setConflict(tabId, 'none')
 }
 
